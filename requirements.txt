@@ -1,0 +1,16 @@
+pandas
+numpy
+requests
+beautifulsoup4
+pdfplumber
+spacy
+sentence-transformers>=2.2.0
+scikit-learn
+matplotlib
+seaborn
+plotly
+streamlit>=1.28.0
+langdetect
+fasttext-wheel
+unidecode
+torch>=2.0.0
