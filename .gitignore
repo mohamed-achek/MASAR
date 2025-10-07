@@ -1,3 +1,91 @@
-.venv
-/data
-/data_scripts
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Environment variables
+.env
+.env.local
+.env.production
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Data files
+/data/raw/
+/data/processed/*.csv
+/data/embeddings/
+*.pkl
+*.joblib
+
+# Model files
+/models/*.bin
+/models/*.pt
+/models/*.h5
+
+# Logs
+*.log
+logs/
+
+# Jupyter
+.ipynb_checkpoints/
+*/.ipynb_checkpoints/*
+
+# Streamlit
+.streamlit/
+
+# Cache
+*.cache
+.cache/
+
+# Temporary files
+*.tmp
+*.temp
+temp/
+
+# Large files
+*.zip
+*.tar.gz
+*.rar
+
+# Sensitive data
+feedback.csv
+user_data/
