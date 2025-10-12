@@ -50,8 +50,9 @@ ehthumbs.db
 Thumbs.db
 
 # Data files
+/data
 /data/raw/
-/data/processed/*.csv
+/data/processed
 /data/embeddings/
 *.pkl
 *.joblib
@@ -60,6 +61,7 @@ Thumbs.db
 /models/*.bin
 /models/*.pt
 /models/*.h5
+/PDF-Extract-Kit
 
 # Logs
 *.log

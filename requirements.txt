@@ -16,3 +16,7 @@ unidecode
 torch>=2.0.0
 pdf2image
 pytesseract
+tqdm
+opencv-python
+pillow
+
