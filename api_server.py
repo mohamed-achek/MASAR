@@ -16,15 +16,55 @@ import sys
 import os
 
 # Add parent directory to path for imports
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+project_root = os.path.dirname(os.path.abspath(__file__))
+pipeline_dir = os.path.join(project_root, 'pipeline')
 
-# Try to import RAG system
+# Add both directories to path
+for path in [project_root, pipeline_dir]:
+    if path not in sys.path:
+        sys.path.insert(0, path)
+
+print(f"📂 Python path configured:")
+print(f"   - Project root: {project_root}")
+print(f"   - Pipeline dir: {pipeline_dir}")
+
+# Try to import RAG system from pipeline
+RAG_AVAILABLE = False
+rag_pipeline = None
+QueryEncoder = None
+Reranker = None
+HybridRetriever = None
+RAGPipeline = None
+LLMInterface = None
+
 try:
-    from models.rag import RAGRetriever, RAGGenerator, RAGPipeline
+    from pathlib import Path
+    print("🔄 Importing RAG modules...")
+    
+    # Import with full context
+    import sys
+    sys.path.insert(0, pipeline_dir)
+    
+    from retrieve import QueryEncoder as QE, Reranker as RR, HybridRetriever as HR
+    from rag_new import RAGPipeline as RP, LLMInterface as LI
+    
+    QueryEncoder = QE
+    Reranker = RR
+    HybridRetriever = HR
+    RAGPipeline = RP
+    LLMInterface = LI
+    
     RAG_AVAILABLE = True
-except ImportError:
+    print("✅ RAG modules imported successfully")
+    print(f"   - QueryEncoder: {QueryEncoder}")
+    print(f"   - HybridRetriever: {HybridRetriever}")
+    print(f"   - RAGPipeline: {RAGPipeline}")
+except Exception as e:
+    print(f"❌ Error importing RAG system: {e}")
+    print(f"   Error type: {type(e).__name__}")
+    import traceback
+    traceback.print_exc()
     RAG_AVAILABLE = False
-    print("Warning: RAG system not available")
 
 # Configuration
 SECRET_KEY = "your-secret-key-change-this-in-production"
@@ -50,25 +90,68 @@ app.add_middleware(
 # Mock database (replace with real database in production)
 fake_users_db = {}
 
-# Initialize RAG system
-rag_pipeline = None
-if RAG_AVAILABLE:
-    try:
-        data_dir = "data/processed"
-        index_path = os.path.join(data_dir, "faiss_index.bin")
-        metadata_path = os.path.join(data_dir, "chunks_metadata.pkl")
-        
-        if os.path.exists(index_path) and os.path.exists(metadata_path):
-            retriever = RAGRetriever()
-            retriever.load_index(index_path, metadata_path)
-            generator = RAGGenerator(model_name="llama3.2", temperature=0.3)
-            rag_pipeline = RAGPipeline(retriever, generator)
+# Initialize RAG system on startup
+@app.on_event("startup")
+async def startup_event():
+    """Initialize RAG system on application startup."""
+    global rag_pipeline
+    
+    if RAG_AVAILABLE:
+        try:
+            from pathlib import Path
+            
+            # Paths to your pipeline indices and embeddings
+            index_dir = Path("data/final/indices")
+            embeddings_dir = Path("data/final/embeddings")
+            
+            if not index_dir.exists():
+                print(f"⚠️  Index directory not found: {index_dir}")
+                print(f"   Run: python pipeline/index.py to create indices")
+                return
+            
+            if not embeddings_dir.exists():
+                print(f"⚠️  Embeddings directory not found: {embeddings_dir}")
+                print(f"   Run: python pipeline/embedding.py to create embeddings")
+                return
+            
+            print("🔄 Initializing RAG system...")
+            
+            # Initialize query encoder
+            encoder = QueryEncoder()
+            
+            # Initialize reranker
+            reranker = Reranker()
+            
+            # Initialize retriever
+            retriever = HybridRetriever(
+                index_dir=index_dir,
+                embeddings_dir=embeddings_dir,
+                encoder=encoder,
+                reranker=reranker
+            )
+            
+            # Initialize LLM interface
+            llm = LLMInterface(
+                provider="ollama",
+                model="llama3.2",
+                api_key=None
+            )
+            
+            # Create RAG pipeline
+            rag_pipeline = RAGPipeline(retriever=retriever, llm=llm)
+            
             print("✅ RAG system initialized successfully")
-        else:
-            print(f"⚠️ RAG index files not found at {data_dir}")
-    except Exception as e:
-        print(f"❌ Error initializing RAG system: {e}")
-        rag_pipeline = None
+            print(f"   - Index dir: {index_dir}")
+            print(f"   - Embeddings dir: {embeddings_dir}")
+            print(f"   - LLM: Ollama (llama3.2)")
+            
+        except Exception as e:
+            print(f"❌ Error initializing RAG system: {e}")
+            import traceback
+            traceback.print_exc()
+            rag_pipeline = None
+    else:
+        print("⚠️  RAG modules not available")
 
 
 # ==================== Models ====================
@@ -247,16 +330,44 @@ async def query_rag(
         )
     
     try:
-        result = rag_pipeline.query(
+        # Use your RAGPipeline's answer_question method
+        result = rag_pipeline.answer_question(
             question=query.question,
-            top_k=query.top_k,
-            language=query.language,
-            return_sources=True,
-            verbose=False
+            k=query.top_k
         )
         
-        return RAGResponse(**result)
+        # Debug: print the result
+        print(f"DEBUG - RAG result keys: {result.keys()}")
+        print(f"DEBUG - RAG result: {result}")
+        
+        # Transform citations to sources format
+        sources = []
+        for citation in result.get("citations", []):
+            sources.append({
+                "id": citation.get("id", ""),
+                "text": citation.get("text", ""),
+                "university": citation.get("university_id", ""),
+                "program": citation.get("program", ""),
+                "section": citation.get("section", ""),
+                "score": citation.get("score", 0.0)
+            })
+        
+        # Transform result to match RAGResponse model
+        response = {
+            "question": query.question,
+            "answer": result.get("answer", ""),
+            "sources": sources,  # Map citations to sources
+            "confidence": result.get("confidence", 0.0),
+            "language": query.language,
+            "model": "llama3.2"
+        }
+        
+        print(f"DEBUG - Response dict: {response}")
+        
+        return RAGResponse(**response)
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error processing query: {str(e)}"
