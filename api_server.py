@@ -122,12 +122,29 @@ async def startup_event():
             # Initialize reranker
             reranker = Reranker()
             
+            # Initialize Elasticsearch client
+            try:
+                from elasticsearch import Elasticsearch
+                es_client = Elasticsearch(
+                    ["http://localhost:9200"],
+                    verify_certs=False,
+                    request_timeout=30
+                )
+                # Test connection
+                es_info = es_client.info()
+                print(f"✅ Connected to Elasticsearch v{es_info['version']['number']}")
+            except Exception as es_error:
+                print(f"⚠️  Elasticsearch connection failed: {es_error}")
+                print("   Continuing with FAISS-only mode...")
+                es_client = None
+            
             # Initialize retriever
             retriever = HybridRetriever(
                 index_dir=index_dir,
                 embeddings_dir=embeddings_dir,
                 encoder=encoder,
-                reranker=reranker
+                reranker=reranker,
+                es_client=es_client
             )
             
             # Initialize LLM interface
@@ -140,9 +157,11 @@ async def startup_event():
             # Create RAG pipeline
             rag_pipeline = RAGPipeline(retriever=retriever, llm=llm)
             
+            search_mode = "Hybrid (FAISS + Elasticsearch)" if es_client else "FAISS only"
             print("✅ RAG system initialized successfully")
             print(f"   - Index dir: {index_dir}")
             print(f"   - Embeddings dir: {embeddings_dir}")
+            print(f"   - Search mode: {search_mode}")
             print(f"   - LLM: Ollama (llama3.2)")
             
         except Exception as e:
