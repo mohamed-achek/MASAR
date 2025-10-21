@@ -117,11 +117,13 @@ class ContextAssembler:
             citation = {
                 "id": i,
                 "type": result.get('type', 'chunk'),
+                "text": result.get('text', ''),  # Include the actual text content
                 "section": metadata.get('section_title', 'Unknown'),
                 "university_id": meta_obj.get('university_id', 'Unknown'),
                 "program": meta_obj.get('program', 'Unknown'),
                 "year": meta_obj.get('year', 'Unknown'),
-                "source_file": meta_obj.get('source_file', 'Unknown')
+                "source_file": meta_obj.get('source_file', 'Unknown'),
+                "score": result.get('rerank_score', result.get('combined_score', result.get('score', 0.0)))
             }
             
             citations.append(citation)

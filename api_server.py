@@ -66,6 +66,27 @@ except Exception as e:
     traceback.print_exc()
     RAG_AVAILABLE = False
 
+# Import new app pipeline modules
+APP_PIPELINE_AVAILABLE = False
+vector_retriever = None
+embedding_service = None
+app_reranker = None
+
+try:
+    print("🔄 Importing app pipeline modules...")
+    from app.input_handler import create_question_record
+    from app.embeddings_service import EmbeddingService
+    from app.retriever import VectorRetriever, DocumentChunk
+    from app.reranker import Reranker as AppReranker
+    
+    APP_PIPELINE_AVAILABLE = True
+    print("✅ App pipeline modules imported successfully")
+except Exception as e:
+    print(f"❌ Error importing app pipeline modules: {e}")
+    import traceback
+    traceback.print_exc()
+    APP_PIPELINE_AVAILABLE = False
+
 # Configuration
 SECRET_KEY = "your-secret-key-change-this-in-production"
 ALGORITHM = "HS256"
@@ -94,7 +115,7 @@ fake_users_db = {}
 @app.on_event("startup")
 async def startup_event():
     """Initialize RAG system on application startup."""
-    global rag_pipeline
+    global rag_pipeline, vector_retriever, embedding_service, app_reranker
     
     if RAG_AVAILABLE:
         try:
@@ -122,29 +143,16 @@ async def startup_event():
             # Initialize reranker
             reranker = Reranker()
             
-            # Initialize Elasticsearch client
-            try:
-                from elasticsearch import Elasticsearch
-                es_client = Elasticsearch(
-                    ["http://localhost:9200"],
-                    verify_certs=False,
-                    request_timeout=30
-                )
-                # Test connection
-                es_info = es_client.info()
-                print(f"✅ Connected to Elasticsearch v{es_info['version']['number']}")
-            except Exception as es_error:
-                print(f"⚠️  Elasticsearch connection failed: {es_error}")
-                print("   Continuing with FAISS-only mode...")
-                es_client = None
-            
-            # Initialize retriever
+            # Initialize retriever with Elasticsearch host
+            # HybridRetriever will create its own ES connection internally
             retriever = HybridRetriever(
                 index_dir=index_dir,
                 embeddings_dir=embeddings_dir,
                 encoder=encoder,
                 reranker=reranker,
-                es_client=es_client
+                es_host="http://localhost:9200",  # Pass host, not client
+                es_user=None,  # No authentication in dev mode
+                es_password=None
             )
             
             # Initialize LLM interface
@@ -157,7 +165,9 @@ async def startup_event():
             # Create RAG pipeline
             rag_pipeline = RAGPipeline(retriever=retriever, llm=llm)
             
-            search_mode = "Hybrid (FAISS + Elasticsearch)" if es_client else "FAISS only"
+            # Check if ES is available in retriever
+            es_available = retriever.es is not None
+            search_mode = "Hybrid (FAISS + Elasticsearch)" if es_available else "FAISS only"
             print("✅ RAG system initialized successfully")
             print(f"   - Index dir: {index_dir}")
             print(f"   - Embeddings dir: {embeddings_dir}")
@@ -171,6 +181,32 @@ async def startup_event():
             rag_pipeline = None
     else:
         print("⚠️  RAG modules not available")
+    
+    # Initialize new app pipeline components
+    if APP_PIPELINE_AVAILABLE:
+        try:
+            print("🔄 Initializing app pipeline components...")
+            
+            # Initialize embedding service
+            embedding_service = EmbeddingService()
+            
+            # Initialize vector retriever (will be populated with data later)
+            vector_retriever = VectorRetriever(embedding_dim=embedding_service.embedding_dim)
+            
+            # Initialize reranker
+            app_reranker = AppReranker()
+            
+            print("✅ App pipeline components initialized")
+            print(f"   - Embedding model: {embedding_service.model_name}")
+            print(f"   - Embedding dim: {embedding_service.embedding_dim}")
+            print(f"   - Reranker model: {app_reranker.model_name}")
+        
+        except Exception as e:
+            print(f"❌ Error initializing app pipeline: {e}")
+            import traceback
+            traceback.print_exc()
+    else:
+        print("⚠️  App pipeline modules not available")
 
 
 # ==================== Models ====================
@@ -204,6 +240,27 @@ class RAGResponse(BaseModel):
     answer: str
     sources: Optional[List[Dict[str, Any]]] = None
     model: str
+
+class QuestionRequest(BaseModel):
+    """Request model for new pipeline question processing"""
+    question: str
+    user_id: Optional[str] = None
+    session_id: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+    top_k: int = 5
+    rerank: bool = True
+
+class QuestionResponse(BaseModel):
+    """Response model for new pipeline question processing"""
+    question_id: str
+    timestamp: str
+    original_question: str
+    processed_question: str
+    intent: str
+    intent_confidence: float
+    language: str
+    results: List[Dict[str, Any]]
+    processing_time: float
 
 
 # ==================== Authentication Functions ====================
@@ -357,27 +414,33 @@ async def query_rag(
         
         # Debug: print the result
         print(f"DEBUG - RAG result keys: {result.keys()}")
-        print(f"DEBUG - RAG result: {result}")
+        print(f"DEBUG - Number of citations: {len(result.get('citations', []))}")
         
         # Transform citations to sources format
         sources = []
         for citation in result.get("citations", []):
-            sources.append({
+            source = {
                 "id": citation.get("id", ""),
                 "text": citation.get("text", ""),
                 "university": citation.get("university_id", ""),
                 "program": citation.get("program", ""),
                 "section": citation.get("section", ""),
-                "score": citation.get("score", 0.0)
-            })
+                "type": citation.get("type", "chunk"),
+                "score": citation.get("score", 0.0),
+                "year": citation.get("year", ""),
+                "source_file": citation.get("source_file", "")
+            }
+            sources.append(source)
+        
+        print(f"DEBUG - Number of sources: {len(sources)}")
+        if sources:
+            print(f"DEBUG - First source: {sources[0]}")
         
         # Transform result to match RAGResponse model
         response = {
             "question": query.question,
             "answer": result.get("answer", ""),
-            "sources": sources,  # Map citations to sources
-            "confidence": result.get("confidence", 0.0),
-            "language": query.language,
+            "sources": sources,  # Map citations to sources with full text
             "model": "llama3.2"
         }
         
@@ -390,6 +453,125 @@ async def query_rag(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error processing query: {str(e)}"
+        )
+
+
+# ==================== New Pipeline Endpoint ====================
+
+@app.post("/api/questions", response_model=QuestionResponse)
+async def process_question(
+    request: QuestionRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Process a question using the new pipeline components.
+    
+    Flow:
+    1. Input handling: Create question record with preprocessing
+    2. Embeddings: Generate embedding for processed question
+    3. Retrieval: Search vector store with optional metadata filtering
+    4. Reranking: Rerank results using cross-encoder (optional)
+    
+    This endpoint demonstrates the new modular pipeline architecture.
+    """
+    import time
+    start_time = time.time()
+    
+    if not APP_PIPELINE_AVAILABLE:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="App pipeline not available. Install required packages: pip install langdetect sentence-transformers faiss-cpu"
+        )
+    
+    if not embedding_service or not embedding_service.model:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Embedding service not initialized"
+        )
+    
+    try:
+        # Step 1: Create question record (input handling + preprocessing + intent/NER)
+        from app.input_handler import create_question_record
+        
+        question_record = create_question_record(
+            question=request.question,
+            user_id=request.user_id or current_user.email,
+            session_id=request.session_id,
+            metadata=request.metadata,
+            preprocess_text=True,
+            analyze_intent=True,
+            mask_pii=True
+        )
+        
+        # Step 2: Generate embedding for processed question
+        query_embedding = embedding_service.get_embedding(
+            question_record['processed_question']
+        )
+        
+        if query_embedding is None:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to generate query embedding"
+            )
+        
+        # Step 3: Retrieve documents
+        # NOTE: For this demo, we'll use sample chunks if no index is loaded
+        # In production, you would load the index during startup
+        results = []
+        
+        if vector_retriever and vector_retriever.size() > 0:
+            # Use existing index
+            retrieved_chunks = vector_retriever.search(
+                query_embedding=query_embedding,
+                top_k=request.top_k * 2 if request.rerank else request.top_k,  # Get more for reranking
+                metadata_filter=request.metadata  # Optional metadata filtering
+            )
+            
+            # Step 4: Rerank (optional)
+            if request.rerank and app_reranker and app_reranker.model:
+                from app.reranker import rerank_chunks
+                retrieved_chunks = rerank_chunks(
+                    query=question_record['processed_question'],
+                    chunks=retrieved_chunks,
+                    top_k=request.top_k
+                )
+            else:
+                # Just take top_k
+                retrieved_chunks = retrieved_chunks[:request.top_k]
+            
+            # Convert chunks to dict format
+            results = [chunk.to_dict() for chunk in retrieved_chunks]
+        else:
+            # Return empty results with warning
+            results = []
+            print("⚠️  No vector index loaded. Returning empty results.")
+        
+        # Calculate processing time
+        processing_time = time.time() - start_time
+        
+        # Build response
+        response = QuestionResponse(
+            question_id=question_record['question_id'],
+            timestamp=question_record['timestamp'],
+            original_question=question_record['original_question'],
+            processed_question=question_record['processed_question'],
+            intent=question_record['intent'],
+            intent_confidence=question_record['intent_confidence'],
+            language=question_record['preprocessing'].get('language', 'unknown'),
+            results=results,
+            processing_time=processing_time
+        )
+        
+        return response
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error processing question: {str(e)}"
         )
 
 
@@ -416,6 +598,7 @@ async def root():
         "endpoints": {
             "auth": "/api/auth/*",
             "rag": "/api/rag/*",
+            "questions": "/api/questions (new pipeline)",
             "health": "/api/health"
         }
     }
