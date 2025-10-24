@@ -12,8 +12,19 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta, timezone
 from jose import JWTError, jwt
 from passlib.context import CryptContext
+from sqlalchemy.orm import Session
 import sys
 import os
+
+# Import database module
+from database import (
+    get_db,
+    init_db,
+    create_default_user,
+    get_user_by_email,
+    create_user as db_create_user,
+    User as DBUser
+)
 
 # Add parent directory to path for imports
 project_root = os.path.dirname(os.path.abspath(__file__))
@@ -108,14 +119,22 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Mock database (replace with real database in production)
-fake_users_db = {}
-
 # Initialize RAG system on startup
 @app.on_event("startup")
 async def startup_event():
-    """Initialize RAG system on application startup."""
+    """Initialize database and RAG system on application startup."""
     global rag_pipeline, vector_retriever, embedding_service, app_reranker
+    
+    # Initialize database
+    try:
+        print("🔄 Initializing database...")
+        init_db()
+        create_default_user()
+        print("✅ Database ready")
+    except Exception as e:
+        print(f"❌ Error initializing database: {e}")
+        import traceback
+        traceback.print_exc()
     
     if RAG_AVAILABLE:
         try:
@@ -284,14 +303,10 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
-def get_user(email: str) -> Optional[User]:
-    """Get user from database"""
-    if email in fake_users_db:
-        user_dict = fake_users_db[email]
-        return User(**user_dict)
-    return None
-
-async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
+async def get_current_user(
+    token: str = Depends(oauth2_scheme),
+    db: Session = Depends(get_db)
+) -> User:
     """Get current user from JWT token"""
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -306,71 +321,90 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
     except JWTError:
         raise credentials_exception
     
-    user = get_user(email=email)
-    if user is None:
+    # Get user from database
+    db_user = get_user_by_email(db, email=email)
+    if db_user is None:
         raise credentials_exception
+    
+    # Convert DB user to Pydantic User model
+    user = User(
+        email=db_user.email,
+        name=db_user.full_name,
+        hashed_password=db_user.hashed_password
+    )
+    
     return user
 
 
 # ==================== Authentication Endpoints ====================
 
 @app.post("/api/auth/signup", response_model=Token)
-async def signup(user_data: UserCreate):
+async def signup(user_data: UserCreate, db: Session = Depends(get_db)):
     """Sign up a new user"""
     # Check if user already exists
-    if user_data.email in fake_users_db:
+    existing_user = get_user_by_email(db, email=user_data.email)
+    if existing_user:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Email already registered"
         )
     
-    # Create user
+    # Create user in database
     hashed_password = get_password_hash(user_data.password)
-    user = {
-        "email": user_data.email,
-        "name": user_data.name,
-        "hashed_password": hashed_password
-    }
-    fake_users_db[user_data.email] = user
+    new_user = db_create_user(
+        db=db,
+        email=user_data.email,
+        full_name=user_data.name,
+        hashed_password=hashed_password
+    )
     
     # Create access token
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
-        data={"sub": user_data.email}, expires_delta=access_token_expires
+        data={"sub": new_user.email}, expires_delta=access_token_expires
     )
     
     return {
         "access_token": access_token,
         "token_type": "bearer",
         "user": {
-            "email": user_data.email,
-            "name": user_data.name
+            "email": new_user.email,
+            "name": new_user.full_name
         }
     }
 
 @app.post("/api/auth/login", response_model=Token)
-async def login(user_data: UserLogin):
+async def login(user_data: UserLogin, db: Session = Depends(get_db)):
     """Login user"""
-    user = get_user(user_data.email)
-    if not user or not verify_password(user_data.password, user.hashed_password):
+    # Get user from database
+    db_user = get_user_by_email(db, email=user_data.email)
+    
+    if not db_user or not verify_password(user_data.password, db_user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
     
+    # Check if user is disabled
+    if db_user.disabled:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account is disabled"
+        )
+    
     # Create access token
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
-        data={"sub": user.email}, expires_delta=access_token_expires
+        data={"sub": db_user.email}, expires_delta=access_token_expires
     )
     
     return {
         "access_token": access_token,
         "token_type": "bearer",
         "user": {
-            "email": user.email,
-            "name": user.name
+            "email": db_user.email,
+            "name": db_user.full_name
         }
     }
 
