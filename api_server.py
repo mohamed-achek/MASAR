@@ -86,9 +86,11 @@ app_reranker = None
 try:
     print("🔄 Importing app pipeline modules...")
     from app.input_handler import create_question_record
-    from app.embeddings_service import EmbeddingService
     from app.retriever import VectorRetriever, DocumentChunk
-    from app.reranker import Reranker as AppReranker
+    
+    # Use shared utilities instead of duplicates
+    from utils.embedding_utils import SharedEmbeddingService
+    from utils.reranker_utils import SharedReranker
     
     APP_PIPELINE_AVAILABLE = True
     print("✅ App pipeline modules imported successfully")
@@ -206,19 +208,20 @@ async def startup_event():
         try:
             print("🔄 Initializing app pipeline components...")
             
-            # Initialize embedding service
-            embedding_service = EmbeddingService()
+            # Initialize shared embedding service (singleton)
+            embedding_service = SharedEmbeddingService.get_instance()
             
             # Initialize vector retriever (will be populated with data later)
             vector_retriever = VectorRetriever(embedding_dim=embedding_service.embedding_dim)
             
-            # Initialize reranker
-            app_reranker = AppReranker()
+            # Initialize shared reranker (singleton)
+            app_reranker = SharedReranker.get_instance()
             
             print("✅ App pipeline components initialized")
             print(f"   - Embedding model: {embedding_service.model_name}")
             print(f"   - Embedding dim: {embedding_service.embedding_dim}")
             print(f"   - Reranker model: {app_reranker.model_name}")
+            print(f"   - Memory optimization: Using shared singleton instances")
         
         except Exception as e:
             print(f"❌ Error initializing app pipeline: {e}")
@@ -563,18 +566,22 @@ async def process_question(
             
             # Step 4: Rerank (optional)
             if request.rerank and app_reranker and app_reranker.model:
-                from app.reranker import rerank_chunks
-                retrieved_chunks = rerank_chunks(
+                # Convert chunks to dicts for reranking
+                chunks_as_dicts = [chunk.to_dict() for chunk in retrieved_chunks]
+                
+                # Use SharedReranker's rerank method
+                reranked_dicts = app_reranker.rerank(
                     query=question_record['processed_question'],
-                    chunks=retrieved_chunks,
-                    top_k=request.top_k
+                    documents=chunks_as_dicts,
+                    top_k=request.top_k,
+                    text_key='text'
                 )
+                results = reranked_dicts
             else:
                 # Just take top_k
                 retrieved_chunks = retrieved_chunks[:request.top_k]
-            
-            # Convert chunks to dict format
-            results = [chunk.to_dict() for chunk in retrieved_chunks]
+                # Convert chunks to dict format
+                results = [chunk.to_dict() for chunk in retrieved_chunks]
         else:
             # Return empty results with warning
             results = []
