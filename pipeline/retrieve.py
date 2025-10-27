@@ -100,18 +100,18 @@ class QueryEncoder:
 # ============================================================================
 
 class Reranker:
-    """Cross-encoder reranker for result refinement."""
+    """BGE reranker for result refinement."""
     
     def __init__(
         self,
-        model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2",
+        model_name: str = "BAAI/bge-reranker-large",
         device: str = "cpu"
     ):
         """
         Initialize reranker.
         
         Args:
-            model_name: Cross-encoder model name
+            model_name: BGE reranker model name
             device: Device to use
         """
         # Force CPU mode
@@ -280,11 +280,15 @@ class HybridRetriever:
             distances, indices = self.table_index.search(query_embedding, k)
             for score, idx in zip(distances[0], indices[0]):
                 if idx < len(self.table_metadata):
+                    metadata = self.table_metadata[idx]
+                    # Try to get text from various fields
+                    text = metadata.get('text_fallback') or metadata.get('text') or metadata.get('content') or str(metadata)
+                    
                     result = {
                         "type": "table",
                         "score": float(score),
-                        "metadata": self.table_metadata[idx],
-                        "text": self.table_metadata[idx]['text_fallback']
+                        "metadata": metadata,
+                        "text": text
                     }
                     
                     # Apply metadata filters

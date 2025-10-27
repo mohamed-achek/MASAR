@@ -12,7 +12,7 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta, timezone
 from jose import JWTError, jwt
 from passlib.context import CryptContext
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 import sys
 import os
 
@@ -21,9 +21,8 @@ from database import (
     get_db,
     init_db,
     create_default_user,
-    get_user_by_email,
-    create_user as db_create_user,
-    User as DBUser
+    User as DBUser,
+    UserCRUD
 )
 
 # Add parent directory to path for imports
@@ -130,8 +129,10 @@ async def startup_event():
     # Initialize database
     try:
         print("🔄 Initializing database...")
-        init_db()
-        create_default_user()
+        # Use async versions directly since we're in an async context
+        from database import _async_init_db, _async_create_default_user
+        await _async_init_db()
+        await _async_create_default_user()
         print("✅ Database ready")
     except Exception as e:
         print(f"❌ Error initializing database: {e}")
@@ -208,18 +209,22 @@ async def startup_event():
         try:
             print("🔄 Initializing app pipeline components...")
             
-            # Initialize shared embedding service (singleton)
-            embedding_service = SharedEmbeddingService.get_instance()
+            # Initialize shared embedding service (singleton - just instantiate normally)
+            embedding_service = SharedEmbeddingService()
+            
+            # Get embedding dimension from a test encoding
+            test_embedding = embedding_service.encode("test")
+            embedding_dim = test_embedding.shape[1] if len(test_embedding.shape) > 1 else len(test_embedding)
             
             # Initialize vector retriever (will be populated with data later)
-            vector_retriever = VectorRetriever(embedding_dim=embedding_service.embedding_dim)
+            vector_retriever = VectorRetriever(embedding_dim=embedding_dim)
             
-            # Initialize shared reranker (singleton)
-            app_reranker = SharedReranker.get_instance()
+            # Initialize shared reranker (singleton - just instantiate normally)
+            app_reranker = SharedReranker()
             
             print("✅ App pipeline components initialized")
             print(f"   - Embedding model: {embedding_service.model_name}")
-            print(f"   - Embedding dim: {embedding_service.embedding_dim}")
+            print(f"   - Embedding dim: {embedding_dim}")
             print(f"   - Reranker model: {app_reranker.model_name}")
             print(f"   - Memory optimization: Using shared singleton instances")
         
@@ -308,7 +313,7 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
 
 async def get_current_user(
     token: str = Depends(oauth2_scheme),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ) -> User:
     """Get current user from JWT token"""
     credentials_exception = HTTPException(
@@ -325,7 +330,7 @@ async def get_current_user(
         raise credentials_exception
     
     # Get user from database
-    db_user = get_user_by_email(db, email=email)
+    db_user = await UserCRUD.get_by_email(db, email=email)
     if db_user is None:
         raise credentials_exception
     
@@ -342,10 +347,10 @@ async def get_current_user(
 # ==================== Authentication Endpoints ====================
 
 @app.post("/api/auth/signup", response_model=Token)
-async def signup(user_data: UserCreate, db: Session = Depends(get_db)):
+async def signup(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
     """Sign up a new user"""
     # Check if user already exists
-    existing_user = get_user_by_email(db, email=user_data.email)
+    existing_user = await UserCRUD.get_by_email(db, email=user_data.email)
     if existing_user:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -354,11 +359,12 @@ async def signup(user_data: UserCreate, db: Session = Depends(get_db)):
     
     # Create user in database
     hashed_password = get_password_hash(user_data.password)
-    new_user = db_create_user(
+    new_user = await UserCRUD.create(
         db=db,
         email=user_data.email,
-        full_name=user_data.name,
-        hashed_password=hashed_password
+        username=user_data.email.split('@')[0],  # Use email prefix as username
+        hashed_password=hashed_password,
+        full_name=user_data.name
     )
     
     # Create access token
@@ -377,10 +383,10 @@ async def signup(user_data: UserCreate, db: Session = Depends(get_db)):
     }
 
 @app.post("/api/auth/login", response_model=Token)
-async def login(user_data: UserLogin, db: Session = Depends(get_db)):
+async def login(user_data: UserLogin, db: AsyncSession = Depends(get_db)):
     """Login user"""
     # Get user from database
-    db_user = get_user_by_email(db, email=user_data.email)
+    db_user = await UserCRUD.get_by_email(db, email=user_data.email)
     
     if not db_user or not verify_password(user_data.password, db_user.hashed_password):
         raise HTTPException(
@@ -389,8 +395,8 @@ async def login(user_data: UserLogin, db: Session = Depends(get_db)):
             headers={"WWW-Authenticate": "Bearer"},
         )
     
-    # Check if user is disabled
-    if db_user.disabled:
+    # Check if user is active
+    if not db_user.is_active:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Account is disabled"
