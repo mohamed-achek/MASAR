@@ -165,16 +165,12 @@ async def startup_event():
             # Initialize reranker
             reranker = Reranker()
             
-            # Initialize retriever with Elasticsearch host
-            # HybridRetriever will create its own ES connection internally
+            # Initialize retriever with FAISS indices
             retriever = HybridRetriever(
                 index_dir=index_dir,
                 embeddings_dir=embeddings_dir,
                 encoder=encoder,
-                reranker=reranker,
-                es_host="http://localhost:9200",  # Pass host, not client
-                es_user=None,  # No authentication in dev mode
-                es_password=None
+                reranker=reranker
             )
             
             # Initialize LLM interface
@@ -187,13 +183,10 @@ async def startup_event():
             # Create RAG pipeline
             rag_pipeline = RAGPipeline(retriever=retriever, llm=llm)
             
-            # Check if ES is available in retriever
-            es_available = retriever.es is not None
-            search_mode = "Hybrid (FAISS + Elasticsearch)" if es_available else "FAISS only"
             print("✅ RAG system initialized successfully")
             print(f"   - Index dir: {index_dir}")
             print(f"   - Embeddings dir: {embeddings_dir}")
-            print(f"   - Search mode: {search_mode}")
+            print(f"   - Search mode: FAISS vector search")
             print(f"   - LLM: Ollama (llama3.2)")
             
         except Exception as e:

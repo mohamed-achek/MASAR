@@ -306,9 +306,34 @@ def generate_embeddings_from_json(
         data = json.load(f)
     
     chunks = data['chunks']
-    table_rows = data['table_rows']
     
-    print(f"✅ Loaded {len(chunks)} chunks and {len(table_rows)} table rows")
+    # Handle both standard (table_rows) and advanced (table_chunks) formats
+    if 'table_rows' in data and data['table_rows']:
+        table_items = data['table_rows']
+        # Detect format by checking first item's structure
+        first_item = table_items[0]
+        if 'metadata' in first_item and first_item['metadata'].get('chunk_type') == 'table_chunk':
+            # Advanced format: unified table chunks with contextual descriptions
+            table_format = 'advanced'
+            print(f"✅ Loaded {len(chunks)} chunks and {len(table_items)} table chunks (advanced format)")
+        elif 'context_paragraph' in first_item:
+            # Standard format: row-by-row table processing
+            table_format = 'standard'
+            print(f"✅ Loaded {len(chunks)} chunks and {len(table_items)} table rows (standard format)")
+        else:
+            # Fallback: use text field if available
+            table_format = 'advanced'
+            print(f"✅ Loaded {len(chunks)} chunks and {len(table_items)} table items (detected format)")
+    elif 'table_chunks' in data:
+        # Explicit advanced format key
+        table_items = data['table_chunks']
+        table_format = 'advanced'
+        print(f"✅ Loaded {len(chunks)} chunks and {len(table_items)} table chunks (advanced format)")
+    else:
+        # Fallback: no table data
+        table_items = []
+        table_format = 'none'
+        print(f"✅ Loaded {len(chunks)} chunks (no table data)")
     
     # Initialize embedder
     embedder = BGE_M3_Embedder(
@@ -341,28 +366,40 @@ def generate_embeddings_from_json(
     output_files['chunk_metadata'] = chunk_meta_path
     
     # ----------------------------------------------------------------
-    # Embed table rows (with context prepended)
+    # Embed table items (format-agnostic)
     # ----------------------------------------------------------------
-    print("\n🔹 Embedding table rows...")
-    # Prepend context to text fallback for better embeddings
-    table_texts = [
-        f"{row['context_paragraph']} {row['text_fallback']}" 
-        for row in table_rows
-    ]
-    table_embeddings = embedder.encode(table_texts)
-    
-    # Save table embeddings
-    table_emb_path = output_dir / "table_embeddings.npy"
-    np.save(table_emb_path, table_embeddings)
-    print(f"✅ Saved table embeddings: {table_emb_path}")
-    output_files['table_embeddings'] = table_emb_path
-    
-    # Save table metadata
-    table_meta_path = output_dir / "table_metadata.json"
-    with open(table_meta_path, 'w', encoding='utf-8') as f:
-        json.dump(table_rows, f, indent=2, ensure_ascii=False)
-    print(f"✅ Saved table metadata: {table_meta_path}")
-    output_files['table_metadata'] = table_meta_path
+    if table_items:
+        if table_format == 'standard':
+            # Standard format: prepend context to text fallback
+            print("\n🔹 Embedding table rows (standard format)...")
+            table_texts = [
+                f"{row['context_paragraph']} {row['text_fallback']}" 
+                for row in table_items
+            ]
+        elif table_format == 'advanced':
+            # Advanced format: use the combined chunk text directly
+            print("\n🔹 Embedding table chunks (advanced format)...")
+            table_texts = [chunk['text'] for chunk in table_items]
+        else:
+            table_texts = []
+        
+        if table_texts:
+            table_embeddings = embedder.encode(table_texts)
+            
+            # Save table embeddings
+            table_emb_path = output_dir / "table_embeddings.npy"
+            np.save(table_emb_path, table_embeddings)
+            print(f"✅ Saved table embeddings: {table_emb_path}")
+            output_files['table_embeddings'] = table_emb_path
+            
+            # Save table metadata
+            table_meta_path = output_dir / "table_metadata.json"
+            with open(table_meta_path, 'w', encoding='utf-8') as f:
+                json.dump(table_items, f, indent=2, ensure_ascii=False)
+            print(f"✅ Saved table metadata: {table_meta_path}")
+            output_files['table_metadata'] = table_meta_path
+    else:
+        print("\n⚠️  No table data to embed")
     
     # ----------------------------------------------------------------
     # Hierarchical section embeddings

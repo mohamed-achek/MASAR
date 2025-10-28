@@ -3,7 +3,7 @@ Retrieval Module - Query processing and result ranking
 
 This module handles:
 - Query normalization and expansion
-- Hybrid search (vector + text)
+- Vector search with FAISS
 - Metadata filtering
 - Cross-encoder reranking
 - Result fusion and deduplication
@@ -19,12 +19,6 @@ import torch
 from transformers import AutoTokenizer, AutoModel
 from sentence_transformers import CrossEncoder
 import faiss
-
-try:
-    from elasticsearch import Elasticsearch
-    ES_AVAILABLE = True
-except ImportError:
-    ES_AVAILABLE = False
 
 
 # ============================================================================
@@ -159,29 +153,23 @@ class Reranker:
 # ============================================================================
 
 class HybridRetriever:
-    """Hybrid retrieval combining vector and text search."""
+    """Vector retrieval using FAISS indices."""
     
     def __init__(
         self,
         index_dir: Path,
         embeddings_dir: Path,
         encoder: QueryEncoder,
-        reranker: Reranker,
-        es_host: Optional[str] = None,
-        es_user: Optional[str] = None,
-        es_password: Optional[str] = None
+        reranker: Reranker
     ):
         """
-        Initialize hybrid retriever.
+        Initialize retriever.
         
         Args:
             index_dir: Directory with FAISS indices
             embeddings_dir: Directory with metadata
             encoder: Query encoder
             reranker: Reranker model
-            es_host: Elasticsearch host (optional)
-            es_user: Elasticsearch username
-            es_password: Elasticsearch password
         """
         self.encoder = encoder
         self.reranker = reranker
@@ -198,18 +186,6 @@ class HybridRetriever:
         
         with open(embeddings_dir / "table_metadata.json", 'r') as f:
             self.table_metadata = json.load(f)
-        
-        # Optional: Elasticsearch
-        self.es = None
-        if ES_AVAILABLE and es_host:
-            try:
-                if es_user and es_password:
-                    self.es = Elasticsearch([es_host], basic_auth=(es_user, es_password))
-                else:
-                    self.es = Elasticsearch([es_host])
-                print(f"✅ Connected to Elasticsearch at {es_host}")
-            except Exception as e:
-                print(f"⚠️  Elasticsearch not available: {e}")
         
         print("✅ Retriever initialized")
     
@@ -300,80 +276,21 @@ class HybridRetriever:
         
         return results
     
-    def text_search(
-        self,
-        query: str,
-        k: int = 20,
-        metadata_filters: Optional[Dict] = None
-    ) -> List[Dict[str, Any]]:
-        """
-        Perform text search using Elasticsearch.
-        
-        Args:
-            query: Query text
-            k: Number of results
-            metadata_filters: Metadata filters
-            
-        Returns:
-            List of search results
-        """
-        if not self.es:
-            return []
-        
-        results = []
-        
-        # Search chunks
-        try:
-            must_clauses = [{"match": {"text": query}}]
-            filter_clauses = []
-            
-            if metadata_filters:
-                for key, value in metadata_filters.items():
-                    filter_clauses.append({"term": {f"metadata.{key}": value}})
-            
-            search_body = {
-                "query": {
-                    "bool": {
-                        "must": must_clauses,
-                        "filter": filter_clauses
-                    }
-                },
-                "size": k
-            }
-            
-            response = self.es.search(index="curriculum_chunks", body=search_body)
-            
-            for hit in response['hits']['hits']:
-                results.append({
-                    "type": "chunk",
-                    "score": hit['_score'],
-                    "metadata": hit['_source'],
-                    "text": hit['_source']['text']
-                })
-        except Exception as e:
-            print(f"⚠️  Text search error: {e}")
-        
-        return results
-    
     def hybrid_search(
         self,
         query: str,
         k: int = 10,
         metadata_filters: Optional[Dict] = None,
-        vector_weight: float = 0.7,
-        text_weight: float = 0.3,
         rerank: bool = True,
         rerank_top_k: Optional[int] = None
     ) -> List[Dict[str, Any]]:
         """
-        Perform hybrid search with optional reranking.
+        Perform vector search with optional reranking.
         
         Args:
             query: Query text
             k: Final number of results
             metadata_filters: Metadata filters
-            vector_weight: Weight for vector search scores
-            text_weight: Weight for text search scores
             rerank: Apply cross-encoder reranking
             rerank_top_k: Number of results to rerank
             
@@ -386,44 +303,16 @@ class HybridRetriever:
         # Vector search
         vector_results = self.vector_search(
             query,
-            k=k * 2,  # Retrieve more for fusion
+            k=k * 2 if rerank else k,  # Retrieve more for reranking
             metadata_filters=metadata_filters
         )
         
-        # Text search (if available)
-        text_results = self.text_search(query, k=k * 2, metadata_filters=metadata_filters)
-        
-        # Combine results with weighted scores
-        combined = {}
-        
-        # Add vector results
-        for result in vector_results:
-            result_id = result['metadata'].get('chunk_id') or result['metadata'].get('row_id')
-            if result_id not in combined:
-                combined[result_id] = result.copy()
-                combined[result_id]['combined_score'] = result['score'] * vector_weight
-            else:
-                combined[result_id]['combined_score'] += result['score'] * vector_weight
-        
-        # Add text results
-        for result in text_results:
-            result_id = result['metadata'].get('chunk_id') or result['metadata'].get('row_id')
-            if result_id not in combined:
-                combined[result_id] = result.copy()
-                combined[result_id]['combined_score'] = result['score'] * text_weight
-            else:
-                combined[result_id]['combined_score'] += result['score'] * text_weight
-        
-        # Sort by combined score
-        results = list(combined.values())
-        results.sort(key=lambda x: x['combined_score'], reverse=True)
-        
         # Rerank with cross-encoder
-        if rerank and results:
+        if rerank and vector_results:
             if rerank_top_k is None:
-                rerank_top_k = min(len(results), k * 3)
+                rerank_top_k = min(len(vector_results), k * 3)
             
-            top_results = results[:rerank_top_k]
+            top_results = vector_results[:rerank_top_k]
             documents = [r['text'] for r in top_results]
             
             ranked = self.reranker.rerank(query, documents, top_k=k)
@@ -437,7 +326,7 @@ class HybridRetriever:
             
             return reranked_results
         
-        return results[:k]
+        return vector_results[:k]
     
     def _matches_filters(self, metadata: Dict, filters: Dict) -> bool:
         """Check if metadata matches filters."""
@@ -460,12 +349,11 @@ def main():
     """Main entry point for retrieval testing."""
     import argparse
     
-    parser = argparse.ArgumentParser(description="Test hybrid retrieval")
+    parser = argparse.ArgumentParser(description="Test vector retrieval")
     parser.add_argument("--index-dir", type=Path, required=True, help="Directory with FAISS indices")
     parser.add_argument("--embeddings-dir", type=Path, required=True, help="Directory with metadata")
     parser.add_argument("--query", required=True, help="Query text")
     parser.add_argument("--k", type=int, default=5, help="Number of results")
-    parser.add_argument("--es-host", help="Elasticsearch host")
     parser.add_argument("--no-rerank", action="store_true", help="Disable reranking")
     
     args = parser.parse_args()
@@ -479,8 +367,7 @@ def main():
         index_dir=args.index_dir,
         embeddings_dir=args.embeddings_dir,
         encoder=encoder,
-        reranker=reranker,
-        es_host=args.es_host
+        reranker=reranker
     )
     
     # Search
@@ -495,7 +382,8 @@ def main():
     print(f"\n📊 Top {len(results)} Results:")
     print("=" * 80)
     for i, result in enumerate(results, 1):
-        print(f"\n{i}. [{result['type'].upper()}] Score: {result.get('rerank_score', result['combined_score']):.4f}")
+        score = result.get('rerank_score', result['score'])
+        print(f"\n{i}. [{result['type'].upper()}] Score: {score:.4f}")
         print(f"   Section: {result['metadata'].get('section_title', 'N/A')}")
         print(f"   Text: {result['text'][:200]}...")
     print("=" * 80)
