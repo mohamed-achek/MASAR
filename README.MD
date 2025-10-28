@@ -1,4 +1,4 @@
-# 🎓 Masar — EduMatch Tunisia
+# 🎓 Masar — Tunisia
 
 <div align="center">
 **Connecting Tunisian Education to Career Opportunities**

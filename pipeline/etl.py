@@ -23,6 +23,26 @@ from functools import lru_cache
 import markdown
 from bs4 import BeautifulSoup, Tag
 
+# Import advanced table processor
+try:
+    from table_processor import (
+        process_all_tables_in_document,
+        export_for_embedding,
+        save_processed_tables
+    )
+    TABLE_PROCESSOR_AVAILABLE = True
+except ImportError:
+    try:
+        from pipeline.table_processor import (
+            process_all_tables_in_document,
+            export_for_embedding,
+            save_processed_tables
+        )
+        TABLE_PROCESSOR_AVAILABLE = True
+    except ImportError:
+        TABLE_PROCESSOR_AVAILABLE = False
+        print("⚠️  Advanced table processor not available")
+
 # LLM imports for summarization
 try:
     import openai
@@ -57,7 +77,6 @@ class TextChunk:
     chunk_id: str
     text: str
     summary: str
-    previous_summary: Optional[str]
     metadata: ChunkMetadata
     section_title: str
     
@@ -460,6 +479,175 @@ def generate_summary(text: str, max_length: int = 100) -> str:
 
 
 # ============================================================================
+# ADVANCED TABLE PROCESSING PIPELINE
+# ============================================================================
+
+def process_markdown_file_advanced_tables(
+    md_file: Path,
+    university_id: str,
+    program: str,
+    year: str,
+    aliases: List[str],
+    max_chunk_tokens: int = 512,
+    overlap_tokens: int = 50,
+    use_llm_summary: bool = True,
+    use_advanced_tables: bool = True,
+    llm_provider: str = "ollama",
+    llm_model: str = None,
+    llm_api_key: str = None
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """
+    Process markdown file with advanced table processing pipeline.
+    
+    This function implements:
+    1. Precise table extraction with surrounding context
+    2. LLM-based contextual descriptions for each table
+    3. Markdown format standardization
+    4. Unified table chunks (description + markdown table)
+    
+    Args:
+        md_file: Path to markdown file
+        university_id: University identifier
+        program: Program name
+        year: Academic year
+        aliases: List of institution aliases
+        max_chunk_tokens: Maximum tokens per chunk
+        overlap_tokens: Token overlap between chunks
+        use_llm_summary: Whether to use LLM for summarization
+        use_advanced_tables: Whether to use advanced table processing pipeline
+        llm_provider: LLM provider - "ollama" or "openai"
+        llm_model: LLM model name
+        llm_api_key: OpenAI API key
+        
+    Returns:
+        Tuple of (paragraph_chunks, table_chunks) as dictionaries
+    """
+    if not TABLE_PROCESSOR_AVAILABLE:
+        print("⚠️  Advanced table processor not available, falling back to standard processing")
+        return process_markdown_file(
+            md_file, university_id, program, year, aliases,
+            max_chunk_tokens, overlap_tokens, use_llm_summary,
+            llm_provider, llm_model, llm_api_key
+        )
+    
+    # Initialize LLM summarizer for paragraphs
+    summarizer = None
+    if use_llm_summary:
+        try:
+            summarizer = LLMSummarizer(
+                provider=llm_provider,
+                model=llm_model,
+                api_key=llm_api_key
+            )
+            print(f"✅ LLM summarizer initialized: {llm_provider} ({summarizer.model})")
+        except Exception as e:
+            print(f"⚠️  LLM summarizer initialization failed: {e}")
+            print("   Falling back to simple summarization")
+    
+    # Read markdown file
+    with open(md_file, 'r', encoding='utf-8') as f:
+        md_text = f.read()
+    
+    # Split by sections
+    sections = split_by_header(md_text, header_level=2)  # Split by H2
+    
+    print(f"\n📄 Processing: {md_file.name}")
+    print(f"   Found {len(sections)} sections")
+    
+    # Configure LLM for table processing
+    llm_config = {
+        'provider': llm_provider,
+        'model': llm_model or ('llama3.2' if llm_provider == 'ollama' else 'gpt-3.5-turbo'),
+        'api_key': llm_api_key
+    }
+    
+    # Metadata for tables
+    table_metadata = {
+        'university_id': university_id,
+        'program': program,
+        'year': year,
+        'aliases': aliases,
+        'source_file': str(md_file.name)
+    }
+    
+    # Process all tables with advanced pipeline
+    if use_advanced_tables:
+        processed_tables = process_all_tables_in_document(
+            md_text=md_text,
+            sections=sections,
+            llm_config=llm_config,
+            metadata=table_metadata,
+            use_llm_formatting=True
+        )
+        
+        # Convert to embedding-ready format
+        table_chunks = export_for_embedding(processed_tables)
+    else:
+        table_chunks = []
+    
+    # Process paragraph chunks (non-table content)
+    print(f"\n📝 Processing paragraph chunks...")
+    all_chunks = []
+    chunk_counter = 0
+    
+    for section_idx, (title, content) in enumerate(sections):
+        # Convert markdown to HTML to remove tables
+        html = markdown.markdown(content, extensions=['tables', 'fenced_code', 'md_in_html'])
+        soup = BeautifulSoup(html, 'html.parser')
+        
+        # Remove all tables from HTML for clean text
+        for table in soup.find_all('table'):
+            table.decompose()
+        
+        # Get plain text (without tables)
+        plain_text = soup.get_text(separator="\n").strip()
+        
+        if plain_text:
+            # Chunk by tokens if needed
+            text_chunks = chunk_by_tokens(plain_text, max_chunk_tokens, overlap_tokens)
+            
+            for text_chunk in text_chunks:
+                chunk_counter += 1
+                chunk_id = f"{university_id}_{program}_{year}_chunk_{chunk_counter}"
+                
+                # Generate summary with LLM or fallback
+                if summarizer:
+                    summary = summarizer.summarize_text_chunk(
+                        text=text_chunk,
+                        program=program,
+                        university=university_id
+                    )
+                else:
+                    summary = generate_summary(text_chunk)
+                
+                # Create metadata
+                metadata = ChunkMetadata(
+                    university_id=university_id,
+                    program=program,
+                    year=year,
+                    aliases=aliases,
+                    source_file=str(md_file.name),
+                    chunk_type='paragraph'
+                )
+                
+                # Create chunk
+                chunk = TextChunk(
+                    chunk_id=chunk_id,
+                    text=text_chunk,
+                    summary=summary,
+                    metadata=metadata,
+                    section_title=title
+                )
+                
+                all_chunks.append(asdict(chunk))
+    
+    print(f"✅ Processed {len(all_chunks)} paragraph chunks")
+    print(f"✅ Processed {len(table_chunks)} table chunks")
+    
+    return all_chunks, table_chunks
+
+
+# ============================================================================
 # MAIN ETL PIPELINE
 # ============================================================================
 
@@ -518,7 +706,6 @@ def process_markdown_file(
     
     all_chunks = []
     all_table_rows = []
-    previous_summary = None
     chunk_counter = 0
     row_counter = 0
     
@@ -609,13 +796,11 @@ def process_markdown_file(
                     chunk_id=chunk_id,
                     text=text_chunk,
                     summary=summary,
-                    previous_summary=previous_summary,
                     metadata=metadata,
                     section_title=title
                 )
                 
                 all_chunks.append(asdict(chunk))
-                previous_summary = summary
         
         # ----------------------------------------------------------------
         # Process tables (row by row)
@@ -732,32 +917,61 @@ def main():
     parser.add_argument("--llm-model", help="LLM model name (default: llama3.1 for Ollama, gpt-4o-mini for OpenAI)")
     parser.add_argument("--openai-api-key", help="OpenAI API key (optional, reads from OPENAI_API_KEY env var)")
     
+    # Advanced table processing options
+    parser.add_argument("--advanced-tables", action="store_true", default=False, 
+                        help="Use advanced table processing pipeline (contextual descriptions + markdown format)")
+    parser.add_argument("--standard-tables", dest="advanced_tables", action="store_false",
+                        help="Use standard table processing (row-by-row, default)")
+    
     args = parser.parse_args()
     
     print(f"🚀 Starting ETL pipeline...")
     print(f"   Input: {args.input}")
     print(f"   Output: {args.output}")
     print(f"   LLM Summarization: {'Enabled' if args.use_llm else 'Disabled'}")
+    print(f"   Table Processing: {'Advanced' if args.advanced_tables else 'Standard'}")
     if args.use_llm:
         print(f"   LLM Provider: {args.llm_provider}")
         print(f"   LLM Model: {args.llm_model or 'default'}")
     
-    # Process markdown file
-    chunks, table_rows = process_markdown_file(
-        md_file=args.input,
-        university_id=args.university_id,
-        program=args.program,
-        year=args.year,
-        aliases=args.aliases,
-        max_chunk_tokens=args.max_tokens,
-        use_llm_summary=args.use_llm,
-        llm_provider=args.llm_provider,
-        llm_model=args.llm_model,
-        llm_api_key=args.openai_api_key
-    )
+    # Choose processing function based on table mode
+    if args.advanced_tables:
+        print("\n📊 Using advanced table processing pipeline:")
+        print("   ✓ Precise table extraction")
+        print("   ✓ Contextual enrichment with LLM")
+        print("   ✓ Markdown format standardization")
+        print("   ✓ Unified table chunks for embedding")
+        
+        chunks, table_chunks = process_markdown_file_advanced_tables(
+            md_file=args.input,
+            university_id=args.university_id,
+            program=args.program,
+            year=args.year,
+            aliases=args.aliases,
+            max_chunk_tokens=args.max_tokens,
+            use_llm_summary=args.use_llm,
+            use_advanced_tables=True,
+            llm_provider=args.llm_provider,
+            llm_model=args.llm_model,
+            llm_api_key=args.openai_api_key
+        )
+    else:
+        print("\n📊 Using standard table processing (row-by-row)")
+        chunks, table_chunks = process_markdown_file(
+            md_file=args.input,
+            university_id=args.university_id,
+            program=args.program,
+            year=args.year,
+            aliases=args.aliases,
+            max_chunk_tokens=args.max_tokens,
+            use_llm_summary=args.use_llm,
+            llm_provider=args.llm_provider,
+            llm_model=args.llm_model,
+            llm_api_key=args.openai_api_key
+        )
     
     # Save to JSON
-    save_to_json(chunks, table_rows, args.output)
+    save_to_json(chunks, table_chunks, args.output)
 
 
 if __name__ == "__main__":
