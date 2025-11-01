@@ -100,33 +100,148 @@ class ContextAssembler:
     
     def create_citations(self, results: List[Dict[str, Any]]) -> List[Dict[str, str]]:
         """
-        Create citation references.
+        Create citation references grouped by PDF source.
         
         Args:
             results: List of retrieval results
             
         Returns:
-            List of citation dictionaries
+            List of citation dictionaries (one per PDF, not per chunk)
         """
-        citations = []
+        # Group results by source file
+        sources_dict = {}
         
-        for i, result in enumerate(results, 1):
+        for result in results:
             metadata = result.get('metadata', {})
             meta_obj = metadata.get('metadata', metadata)
             
-            citation = {
-                "id": i,
+            source_file = meta_obj.get('source_file', 'Unknown')
+            
+            # Initialize source entry if not exists
+            if source_file not in sources_dict:
+                sources_dict[source_file] = {
+                    "source_file": source_file,
+                    "university_id": meta_obj.get('university_id', 'Unknown'),
+                    "program": meta_obj.get('program', 'Unknown'),
+                    "year": meta_obj.get('year', 'Unknown'),
+                    "chunks": [],
+                    "sections": set(),
+                    "max_score": 0.0
+                }
+            
+            # Extract section title from text or metadata
+            section_title = metadata.get('section_title', '')
+            chunk_text = result.get('text', '')
+            
+            # If section_title is empty, try to extract from text
+            if not section_title or section_title == 'Unknown':
+                # Look for section headers in format "X.Y. Title" or "X. Title"
+                import re
+                section_patterns = [
+                    r'^(\d+\.\d+\.?\s+[A-Z][^\n]{5,80})',  # "3.2. Grading Policy"
+                    r'^(\d+\.\s+[A-Z][^\n]{5,80})',        # "3. STUDENT AFFAIRS"
+                    r'^\n(\d+\.\d+\.?\s+[A-Z][^\n]{5,80})', # With leading newline
+                    r'^\n(\d+\.\s+[A-Z][^\n]{5,80})',
+                ]
+                
+                for pattern in section_patterns:
+                    match = re.search(pattern, chunk_text, re.MULTILINE)
+                    if match:
+                        section_title = match.group(1).strip()
+                        # Clean up the title
+                        section_title = re.sub(r'\s+', ' ', section_title)
+                        break
+            
+            # If still no section, check for prominent headers in the text
+            if not section_title or section_title == 'Unknown':
+                # Look for ALL CAPS headers
+                lines = chunk_text.split('\n')
+                for line in lines[:5]:  # Check first 5 lines
+                    line = line.strip()
+                    if line and len(line) > 5 and len(line) < 80:
+                        if line.isupper() or (line[0].isupper() and '.' in line[:5]):
+                            section_title = line
+                            break
+            
+            # Default if nothing found
+            if not section_title or section_title == 'Unknown':
+                section_title = "Document Content"
+            
+            # Add chunk info to this source
+            chunk_info = {
+                "text": chunk_text,
+                "section": section_title,
                 "type": result.get('type', 'chunk'),
-                "text": result.get('text', ''),  # Include the actual text content
-                "section": metadata.get('section_title', 'Unknown'),
-                "university_id": meta_obj.get('university_id', 'Unknown'),
-                "program": meta_obj.get('program', 'Unknown'),
-                "year": meta_obj.get('year', 'Unknown'),
-                "source_file": meta_obj.get('source_file', 'Unknown'),
                 "score": result.get('rerank_score', result.get('combined_score', result.get('score', 0.0)))
             }
             
+            sources_dict[source_file]["chunks"].append(chunk_info)
+            sources_dict[source_file]["sections"].add(section_title)
+            sources_dict[source_file]["max_score"] = max(
+                sources_dict[source_file]["max_score"],
+                chunk_info["score"]
+            )
+        
+        # Convert to list of citations (one per PDF)
+        citations = []
+        for i, (source_file, source_data) in enumerate(sources_dict.items(), 1):
+            sections_list = sorted(list(source_data["sections"]))
+            
+            # Create PDF header
+            pdf_name = source_file.replace('.md', '.pdf').replace('_', ' ')
+            description = f"📄 {pdf_name}\n"
+            description += f"🏫 {source_data['university_id']} | "
+            description += f"📚 {source_data['program']} | "
+            description += f"📅 {source_data['year']}\n"
+            description += "\n" + "="*60 + "\n\n"
+            
+            # Group chunks by section and add their content
+            section_chunks = {}
+            for chunk in source_data["chunks"]:
+                section = chunk["section"] if chunk["section"] and chunk["section"] != "Unknown" else "General Content"
+                if section not in section_chunks:
+                    section_chunks[section] = []
+                section_chunks[section].append(chunk)
+            
+            # Add each section with its content
+            for section, chunks in section_chunks.items():
+                description += f"📑 Section: {section}\n"
+                description += "-" * 60 + "\n"
+                
+                # Add top 2 most relevant chunks from this section
+                sorted_chunks = sorted(chunks, key=lambda x: x["score"], reverse=True)[:2]
+                for chunk in sorted_chunks:
+                    # Truncate chunk text to reasonable length
+                    chunk_text = chunk["text"][:400] + "..." if len(chunk["text"]) > 400 else chunk["text"]
+                    description += f"{chunk_text}\n\n"
+                
+                if len(chunks) > 2:
+                    description += f"[... and {len(chunks) - 2} more passage(s) from this section]\n"
+                
+                description += "\n"
+            
+            citation = {
+                "id": i,
+                "type": "pdf",
+                "source_file": source_file,
+                "university_id": source_data["university_id"],
+                "program": source_data["program"],
+                "year": source_data["year"],
+                "sections": sections_list,
+                "chunk_count": len(source_data["chunks"]),
+                "score": source_data["max_score"],
+                # Include actual section content from the PDF
+                "text": description.strip()
+            }
+            
             citations.append(citation)
+        
+        # Sort by score (highest first)
+        citations.sort(key=lambda x: x["score"], reverse=True)
+        
+        # Reassign sequential IDs after sorting
+        for i, citation in enumerate(citations, 1):
+            citation["id"] = i
         
         return citations
 

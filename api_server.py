@@ -176,7 +176,7 @@ async def startup_event():
             # Initialize LLM interface
             llm = LLMInterface(
                 provider="ollama",
-                model="llama3.2",
+                model="mistral",
                 api_key=None
             )
             
@@ -187,7 +187,7 @@ async def startup_event():
             print(f"   - Index dir: {index_dir}")
             print(f"   - Embeddings dir: {embeddings_dir}")
             print(f"   - Search mode: FAISS vector search")
-            print(f"   - LLM: Ollama (llama3.2)")
+            print(f"   - LLM: Ollama (mistral)")
             
         except Exception as e:
             print(f"❌ Error initializing RAG system: {e}")
@@ -452,23 +452,24 @@ async def query_rag(
         print(f"DEBUG - RAG result keys: {result.keys()}")
         print(f"DEBUG - Number of citations: {len(result.get('citations', []))}")
         
-        # Transform citations to sources format
+        # Transform citations to sources format (now grouped by PDF)
         sources = []
         for citation in result.get("citations", []):
             source = {
                 "id": citation.get("id", ""),
-                "text": citation.get("text", ""),
+                "type": citation.get("type", "pdf"),  # Now always "pdf"
+                "source_file": citation.get("source_file", ""),
                 "university": citation.get("university_id", ""),
                 "program": citation.get("program", ""),
-                "section": citation.get("section", ""),
-                "type": citation.get("type", "chunk"),
-                "score": citation.get("score", 0.0),
                 "year": citation.get("year", ""),
-                "source_file": citation.get("source_file", "")
+                "sections": citation.get("sections", []),  # List of sections in this PDF
+                "chunk_count": citation.get("chunk_count", 0),  # Number of relevant chunks
+                "score": citation.get("score", 0.0),
+                "text": citation.get("text", "")  # Preview text from top chunks
             }
             sources.append(source)
         
-        print(f"DEBUG - Number of sources: {len(sources)}")
+        print(f"DEBUG - Number of sources (PDFs): {len(sources)}")
         if sources:
             print(f"DEBUG - First source: {sources[0]}")
         
@@ -477,7 +478,7 @@ async def query_rag(
             "question": query.question,
             "answer": result.get("answer", ""),
             "sources": sources,  # Map citations to sources with full text
-            "model": "llama3.2"
+            "model": "mistral"
         }
         
         print(f"DEBUG - Response dict: {response}")
