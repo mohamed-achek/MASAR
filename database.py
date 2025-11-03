@@ -97,6 +97,11 @@ async def close_db():
     print("✅ PostgreSQL connections closed")
 
 
+def get_db_url() -> str:
+    """Get the database URL."""
+    return DATABASE_URL
+
+
 # ============================================================================
 # MIGRATION FROM SQLITE
 # ============================================================================
