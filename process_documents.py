@@ -2,6 +2,7 @@
 """
 Batch process multiple MD files through the RAG pipeline.
 Supports processing all files in a directory or specific files.
+Can also process from a metadata configuration file.
 """
 
 import sys
@@ -9,7 +10,7 @@ import os
 import subprocess
 import json
 from pathlib import Path
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 import argparse
 
 
@@ -103,12 +104,91 @@ class DocumentProcessor:
         
         return metadata
     
+    def load_config(self, config_file: str) -> Dict:
+        """Load metadata configuration from JSON file"""
+        config_path = Path(config_file)
+        if not config_path.exists():
+            raise FileNotFoundError(f"Config file not found: {config_file}")
+        
+        with open(config_path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    
+    def process_from_config(
+        self,
+        config_file: str,
+        skip_existing: bool = True
+    ) -> Dict[str, int]:
+        """
+        Process files from configuration file.
+        
+        Args:
+            config_file: Path to metadata_config.json
+            skip_existing: Skip already processed files
+            
+        Returns:
+            Dictionary with success/failure counts
+        """
+        # Load config
+        config = self.load_config(config_file)
+        files_config = config.get('files', [])
+        
+        if not files_config:
+            print("⚠️  No files found in configuration")
+            return {"total": 0, "success": 0, "failed": 0, "skipped": 0}
+        
+        print(f"\n{'='*80}")
+        print(f"PROCESSING FROM CONFIGURATION FILE")
+        print(f"{'='*80}")
+        print(f"📋 Config: {config_file}")
+        print(f"📚 Files: {len(files_config)}")
+        print(f"{'='*80}\n")
+        
+        results = {"total": len(files_config), "success": 0, "failed": 0, "skipped": 0}
+        
+        for i, file_cfg in enumerate(files_config, 1):
+            file_path = Path(file_cfg['file'])
+            
+            # Check if file exists
+            if not file_path.exists():
+                print(f"❌ [{i}/{len(files_config)}] File not found: {file_path}")
+                results["failed"] += 1
+                continue
+            
+            # Check if already processed
+            if skip_existing and self.is_file_processed(file_path):
+                print(f"⏭️  [{i}/{len(files_config)}] Skipping already processed: {file_path.name}")
+                results["skipped"] += 1
+                continue
+            
+            print(f"\n[{i}/{len(files_config)}] Processing {file_path.name}...")
+            
+            # Process with metadata from config
+            success = self.process_file(
+                file_path=file_path,
+                university=file_cfg.get('university_id'),
+                program=file_cfg.get('program'),
+                year=file_cfg.get('year'),
+                aliases=file_cfg.get('aliases'),
+                language=file_cfg.get('language'),
+                document_type=file_cfg.get('document_type')
+            )
+            
+            if success:
+                results["success"] += 1
+            else:
+                results["failed"] += 1
+        
+        return results
+    
     def process_file(
         self,
         file_path: Path,
         university: Optional[str] = None,
         program: Optional[str] = None,
-        year: Optional[str] = None
+        year: Optional[str] = None,
+        aliases: Optional[List[str]] = None,
+        language: Optional[str] = None,
+        document_type: Optional[str] = None
     ) -> bool:
         """
         Process a single MD file through the pipeline.
@@ -128,6 +208,12 @@ class DocumentProcessor:
         print(f"  University: {university}")
         print(f"  Program:    {program}")
         print(f"  Year:       {year}")
+        if aliases:
+            print(f"  Aliases:    {', '.join(aliases)}")
+        if language:
+            print(f"  Language:   {language}")
+        if document_type:
+            print(f"  Type:       {document_type}")
         print(f"{'='*70}\n")
         
         # Run the shell script
@@ -195,6 +281,9 @@ Examples:
   # Process all files with auto-detected metadata
   python process_documents.py --directory data/raw/Universities --auto-detect
 
+  # Process from configuration file
+  python process_documents.py --config metadata_config.json
+
   # List available files without processing
   python process_documents.py --directory data/raw/Universities --list-only
         """
@@ -209,6 +298,10 @@ Examples:
     input_group.add_argument(
         "--directory",
         help="Process all MD files in a directory (recursive)"
+    )
+    input_group.add_argument(
+        "--config",
+        help="Process files from metadata configuration JSON file"
     )
     
     # Metadata options
@@ -247,6 +340,30 @@ Examples:
     # Get project directory
     project_dir = Path(__file__).parent
     processor = DocumentProcessor(project_dir)
+    
+    # Handle config file mode
+    if args.config:
+        try:
+            results = processor.process_from_config(
+                config_file=args.config,
+                skip_existing=not args.force
+            )
+            
+            # Print summary
+            print(f"\n{'='*80}")
+            print("📊 PROCESSING SUMMARY")
+            print(f"{'='*80}")
+            print(f"  Total files:     {results['total']}")
+            print(f"  ✅ Successful:    {results['success']}")
+            print(f"  ⏭️  Skipped:       {results['skipped']}")
+            print(f"  ❌ Failed:        {results['failed']}")
+            print(f"{'='*80}\n")
+            
+            return 0 if results['failed'] == 0 else 1
+            
+        except FileNotFoundError as e:
+            print(f"❌ {e}")
+            return 1
     
     # Collect files to process
     files_to_process = []

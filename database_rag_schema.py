@@ -25,7 +25,8 @@ class Document(Base):
     
     id = Column(Integer, primary_key=True, autoincrement=True)
     source_file = Column(String(255), nullable=False, unique=True)
-    file_path = Column(String(500), nullable=False)
+    file_path = Column(String(500), nullable=True)  # Keep for backward compatibility
+    file_content = Column(LargeBinary, nullable=True)  # Store actual file content
     file_type = Column(String(50))  # 'pdf', 'md', etc.
     university_id = Column(String(50), nullable=False, index=True)
     program = Column(String(255), nullable=False, index=True)
