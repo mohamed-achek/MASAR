@@ -7,7 +7,10 @@ const HandbookAssistant = () => {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [ragAvailable, setRagAvailable] = useState(true);
+  const [streamingMessage, setStreamingMessage] = useState('');
+  const [loadingStage, setLoadingStage] = useState('');
   const messagesEndRef = useRef(null);
+  const abortControllerRef = useRef(null);
   
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -15,7 +18,7 @@ const HandbookAssistant = () => {
   
   useEffect(() => {
     scrollToBottom();
-  }, [messages]);
+  }, [messages, streamingMessage]);
   
   useEffect(() => {
     // Check if RAG is available
@@ -39,34 +42,132 @@ const HandbookAssistant = () => {
     const newMessages = [...messages, { role: 'user', content: userMessage }];
     setMessages(newMessages);
     setLoading(true);
+    setStreamingMessage('');
+    
+    // Add placeholder for assistant message with loading stage
+    const placeholderMessage = { 
+      role: 'assistant', 
+      content: '', 
+      sources: [], 
+      streaming: true,
+      loadingStage: 'thinking'
+    };
+    setMessages([...newMessages, placeholderMessage]);
+    setLoadingStage('thinking');
     
     try {
-      const response = await axios.post('/api/rag/query', {
-        question: userMessage,
-        language: 'auto',
-        top_k: 3,
+      // Simulate stage transitions
+      setTimeout(() => setLoadingStage('searching'), 500);
+      setTimeout(() => setLoadingStage('analyzing'), 1500);
+      setTimeout(() => setLoadingStage('generating'), 2500);
+      
+      // Create abort controller for cancellation
+      abortControllerRef.current = new AbortController();
+      
+      // Prepare conversation history (last 5 messages for context)
+      const conversationHistory = messages
+        .slice(-10) // Get last 10 messages (5 exchanges)
+        .map(msg => ({
+          role: msg.role,
+          content: msg.content
+        }));
+      
+      const response = await fetch('/api/rag/query-stream', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': axios.defaults.headers.common['Authorization'],
+        },
+        body: JSON.stringify({
+          question: userMessage,
+          language: 'auto',
+          top_k: 3,
+          conversation_history: conversationHistory,
+        }),
+        signal: abortControllerRef.current.signal,
       });
       
-      // Add assistant response
-      setMessages([
-        ...newMessages,
-        {
-          role: 'assistant',
-          content: response.data.answer,
-          sources: response.data.sources || [],
-        },
-      ]);
+      if (!response.ok) {
+        throw new Error('Failed to fetch streaming response');
+      }
+      
+      setLoadingStage('');
+      
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let accumulatedText = '';
+      let sources = [];
+      
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        
+        const chunk = decoder.decode(value);
+        const lines = chunk.split('\n');
+        
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6));
+              
+              if (data.type === 'token') {
+                accumulatedText += data.content;
+                setStreamingMessage(accumulatedText);
+                
+                // Update the last message in real-time
+                setMessages(prev => {
+                  const updated = [...prev];
+                  updated[updated.length - 1] = {
+                    role: 'assistant',
+                    content: accumulatedText,
+                    sources: [],
+                    streaming: true,
+                  };
+                  return updated;
+                });
+              } else if (data.type === 'sources') {
+                sources = data.content;
+              } else if (data.type === 'done') {
+                // Finalize the message
+                setMessages(prev => {
+                  const updated = [...prev];
+                  updated[updated.length - 1] = {
+                    role: 'assistant',
+                    content: accumulatedText,
+                    sources: sources,
+                    streaming: false,
+                  };
+                  return updated;
+                });
+                setStreamingMessage('');
+              } else if (data.type === 'error') {
+                throw new Error(data.content);
+              }
+            } catch (parseError) {
+              console.error('Error parsing SSE data:', parseError);
+            }
+          }
+        }
+      }
     } catch (error) {
-      setMessages([
-        ...newMessages,
-        {
-          role: 'assistant',
-          content: 'Sorry, I encountered an error. Please try again.',
-          error: true,
-        },
-      ]);
+      if (error.name === 'AbortError') {
+        console.log('Streaming aborted');
+      } else {
+        console.error('Streaming error:', error);
+        setMessages(prev => {
+          const updated = [...prev];
+          updated[updated.length - 1] = {
+            role: 'assistant',
+            content: 'Sorry, I encountered an error. Please try again.',
+            error: true,
+            streaming: false,
+          };
+          return updated;
+        });
+      }
     } finally {
       setLoading(false);
+      abortControllerRef.current = null;
     }
   };
   
@@ -150,38 +251,78 @@ const HandbookAssistant = () => {
                         : 'bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-100'
                     }`}
                   >
-                    <div className="whitespace-pre-wrap">{message.content}</div>
-                    
-                    {/* Sources */}
-                    {message.sources && message.sources.length > 0 && (
-                      <details className="mt-4 text-sm">
-                        <summary className="cursor-pointer font-semibold text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100">
-                          📚 View {message.sources.length} sources
-                        </summary>
-                        <div className="mt-3 space-y-3">
-                          {message.sources.map((source, idx) => (
-                            <div key={idx} className="bg-white dark:bg-gray-600 rounded p-3 border border-gray-200 dark:border-gray-500">
-                              <div className="flex items-center justify-between mb-2">
-                                <span className="font-semibold text-gray-700 dark:text-gray-200">Source {source.rank}</span>
-                                <span className="text-xs text-gray-500 dark:text-gray-400">Score: {(source.score * 100).toFixed(1)}%</span>
-                              </div>
-                              <p className="text-xs text-gray-600 dark:text-gray-300 line-clamp-3">{source.text}</p>
-                            </div>
-                          ))}
+                    {/* Loading Stage Indicator */}
+                    {message.streaming && !message.content && (
+                      <div className="flex items-center gap-3">
+                        <div className="relative">
+                          <Loader className="w-5 h-5 text-blue-600 dark:text-blue-400 animate-spin" />
+                          <div className="absolute -inset-1 bg-blue-400/20 dark:bg-blue-400/10 rounded-full animate-ping"></div>
                         </div>
-                      </details>
+                        <div className="space-y-1">
+                          {loadingStage === 'thinking' && (
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-medium text-blue-600 dark:text-blue-400">
+                                🤔 Understanding your question...
+                              </span>
+                              <div className="flex gap-1">
+                                <span className="w-1.5 h-1.5 bg-blue-600 dark:bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></span>
+                                <span className="w-1.5 h-1.5 bg-blue-600 dark:bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></span>
+                                <span className="w-1.5 h-1.5 bg-blue-600 dark:bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></span>
+                              </div>
+                            </div>
+                          )}
+                          {loadingStage === 'searching' && (
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-medium text-purple-600 dark:text-purple-400">
+                                🔍 Searching through handbooks...
+                              </span>
+                              <div className="flex gap-1">
+                                <span className="w-1.5 h-1.5 bg-purple-600 dark:bg-purple-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></span>
+                                <span className="w-1.5 h-1.5 bg-purple-600 dark:bg-purple-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></span>
+                                <span className="w-1.5 h-1.5 bg-purple-600 dark:bg-purple-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></span>
+                              </div>
+                            </div>
+                          )}
+                          {loadingStage === 'analyzing' && (
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-medium text-amber-600 dark:text-amber-400">
+                                📊 Analyzing relevant information...
+                              </span>
+                              <div className="flex gap-1">
+                                <span className="w-1.5 h-1.5 bg-amber-600 dark:bg-amber-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></span>
+                                <span className="w-1.5 h-1.5 bg-amber-600 dark:bg-amber-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></span>
+                                <span className="w-1.5 h-1.5 bg-amber-600 dark:bg-amber-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></span>
+                              </div>
+                            </div>
+                          )}
+                          {loadingStage === 'generating' && (
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-medium text-green-600 dark:text-green-400">
+                                ✨ Generating optimal answer...
+                              </span>
+                              <div className="flex gap-1">
+                                <span className="w-1.5 h-1.5 bg-green-600 dark:bg-green-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></span>
+                                <span className="w-1.5 h-1.5 bg-green-600 dark:bg-green-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></span>
+                                <span className="w-1.5 h-1.5 bg-green-600 dark:bg-green-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></span>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                    
+                    {/* Streaming content */}
+                    {message.content && (
+                      <div className="whitespace-pre-wrap">
+                        {message.content}
+                        {message.streaming && (
+                          <span className="inline-block w-2 h-5 ml-1 bg-gray-600 dark:bg-gray-300 animate-pulse"></span>
+                        )}
+                      </div>
                     )}
                   </div>
                 </div>
               ))}
-              
-              {loading && (
-                <div className="flex justify-start">
-                  <div className="bg-gray-100 dark:bg-gray-700 rounded-lg p-4">
-                    <Loader className="w-6 h-6 text-gray-600 dark:text-gray-400 animate-spin" />
-                  </div>
-                </div>
-              )}
               
               <div ref={messagesEndRef} />
             </>

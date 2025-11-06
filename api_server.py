@@ -7,6 +7,7 @@ Provides authentication and RAG query endpoints
 from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, EmailStr
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta, timezone
@@ -15,6 +16,8 @@ from passlib.context import CryptContext
 from sqlalchemy.ext.asyncio import AsyncSession
 import sys
 import os
+import json
+import asyncio
 
 # Import database module
 from database import (
@@ -250,10 +253,15 @@ class Token(BaseModel):
     token_type: str
     user: Dict[str, Any]
 
+class ConversationMessage(BaseModel):
+    role: str
+    content: str
+
 class RAGQuery(BaseModel):
     question: str
     language: str = "auto"
     top_k: int = 3
+    conversation_history: Optional[List[ConversationMessage]] = None
 
 class RAGResponse(BaseModel):
     question: str
@@ -442,9 +450,21 @@ async def query_rag(
         )
     
     try:
+        # Build context from conversation history
+        context = ""
+        if query.conversation_history:
+            context = "Previous conversation:\n"
+            for msg in query.conversation_history[-6:]:  # Last 3 exchanges
+                role = "User" if msg.role == "user" else "Assistant"
+                context += f"{role}: {msg.content}\n"
+            context += "\nCurrent question:\n"
+        
+        # Construct question with context
+        question_with_context = f"{context}{query.question}" if context else query.question
+        
         # Use your RAGPipeline's answer_question method
         result = rag_pipeline.answer_question(
-            question=query.question,
+            question=question_with_context,
             k=query.top_k
         )
         
@@ -491,6 +511,82 @@ async def query_rag(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error processing query: {str(e)}"
         )
+
+
+@app.post("/api/rag/query-stream")
+async def query_rag_stream(
+    query: RAGQuery,
+    current_user: User = Depends(get_current_user)
+):
+    """Query the RAG system with streaming response"""
+    if not rag_pipeline:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="RAG system not available"
+        )
+    
+    async def generate_stream():
+        try:
+            # Build context from conversation history
+            context = ""
+            if query.conversation_history:
+                context = "Previous conversation:\n"
+                for msg in query.conversation_history[-6:]:  # Last 3 exchanges
+                    role = "User" if msg.role == "user" else "Assistant"
+                    context += f"{role}: {msg.content}\n"
+                context += "\nCurrent question:\n"
+            
+            # Construct question with context
+            question_with_context = f"{context}{query.question}" if context else query.question
+            
+            # Get the answer (non-streaming for now, we'll simulate streaming)
+            result = rag_pipeline.answer_question(
+                question=question_with_context,
+                k=query.top_k
+            )
+            
+            answer = result.get("answer", "")
+            
+            # Stream the answer word by word
+            words = answer.split()
+            for i, word in enumerate(words):
+                chunk = word + (" " if i < len(words) - 1 else "")
+                yield f"data: {json.dumps({'type': 'token', 'content': chunk})}\n\n"
+                await asyncio.sleep(0.05)  # Small delay for streaming effect
+            
+            # Send sources at the end
+            sources = []
+            for citation in result.get("citations", []):
+                source = {
+                    "id": citation.get("id", ""),
+                    "type": citation.get("type", "pdf"),
+                    "source_file": citation.get("source_file", ""),
+                    "university": citation.get("university_id", ""),
+                    "program": citation.get("program", ""),
+                    "year": citation.get("year", ""),
+                    "sections": citation.get("sections", []),
+                    "chunk_count": citation.get("chunk_count", 0),
+                    "score": citation.get("score", 0.0),
+                    "text": citation.get("text", "")
+                }
+                sources.append(source)
+            
+            yield f"data: {json.dumps({'type': 'sources', 'content': sources})}\n\n"
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
+    
+    return StreamingResponse(
+        generate_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        }
+    )
 
 
 # ==================== New Pipeline Endpoint ====================
