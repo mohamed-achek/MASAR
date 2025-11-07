@@ -53,7 +53,7 @@ const Login = () => {
   
   useEffect(() => {
     if (isAuthenticated) {
-      navigate('/');
+      navigate('/dashboard');
     }
   }, [isAuthenticated, navigate]);
   
@@ -65,7 +65,7 @@ const Login = () => {
     e.preventDefault();
     const success = await login(formData.email, formData.password);
     if (success) {
-      navigate('/');
+      navigate('/dashboard');
     }
   };
   

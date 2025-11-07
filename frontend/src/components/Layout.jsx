@@ -12,9 +12,9 @@ const Layout = () => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   
   const navigation = [
-    { name: 'Dashboard', path: '/', icon: Home },
-    { name: 'Career Matching', path: '/career-matching', icon: Target },
-    { name: 'Handbook Assistant', path: '/handbook', icon: BookOpen },
+    { name: 'Dashboard', path: '/dashboard', icon: Home },
+    { name: 'Career Matching', path: '/dashboard/career-matching', icon: Target },
+    { name: 'Handbook Assistant', path: '/dashboard/handbook', icon: BookOpen },
   ];
   
   const handleLogout = () => {
@@ -30,7 +30,7 @@ const Layout = () => {
           <div className="flex justify-between items-center h-16">
             {/* Logo */}
             <div className="flex items-center">
-              <Link to="/" className="flex items-center space-x-2">
+              <Link to="/dashboard" className="flex items-center space-x-2">
                 <div className="w-10 h-10 bg-white dark:bg-gray-800 rounded-lg flex items-center justify-center">
                   <span className="text-primary-600 dark:text-primary-400 font-bold text-xl">M</span>
                 </div>

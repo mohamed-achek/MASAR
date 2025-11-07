@@ -68,7 +68,7 @@ const Signup = () => {
   
   useEffect(() => {
     if (isAuthenticated) {
-      navigate('/');
+      navigate('/dashboard');
     }
   }, [isAuthenticated, navigate]);
   
@@ -98,7 +98,7 @@ const Signup = () => {
     
     const success = await signup(formData.email, formData.password, formData.name);
     if (success) {
-      navigate('/');
+      navigate('/dashboard');
     }
   };
   

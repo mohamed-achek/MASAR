@@ -1,0 +1,103 @@
+{
+  "files": [
+    {
+      "file": "data/processed/MD/TBS_Handbook-2022.md",
+      "university_id": "TBS",
+      "program": "Bachelor of Science in Business Administration",
+      "year": "2022",
+      "aliases": ["BCOR", "Business Administration", "Business", "TBS"],
+      "language": "en",
+      "document_type": "handbook"
+    },
+    {
+      "file": "data/processed/MD/essect.md",
+      "university_id": "ESSECT",
+      "program": "Economics and Management",
+      "year": "2024",
+      "aliases": ["Economics", "Management", "ESSECT"],
+      "language": "en",
+      "document_type": "handbook"
+    },
+    {
+      "file": "data/processed/MD/Brochure_LNBC_BI.md",
+      "university_id": "LNBC",
+      "program": "Bachelor in Informatics",
+      "year": "2024",
+      "aliases": ["BI", "Informatics", "Computer Science", "LNBC"],
+      "language": "en",
+      "document_type": "brochure"
+    },
+    {
+      "file": "data/processed/MD/Brochure_LNBC_BIS.md",
+      "university_id": "LNBC",
+      "program": "Bachelor of Information Systems",
+      "year": "2024",
+      "aliases": ["BIS", "Information Systems", "InfoSys", "LNBC"],
+      "language": "en",
+      "document_type": "brochure"
+    },
+    {
+      "file": "data/processed/MD/Brochure_LNSE_BE.md",
+      "university_id": "LNSE",
+      "program": "Bachelor in Economics",
+      "year": "2024",
+      "aliases": ["BE", "Economics", "LNSE"],
+      "language": "en",
+      "document_type": "brochure"
+    },
+    {
+      "file": "data/processed/MD/Brochure_LNSE_IEF.md",
+      "university_id": "LNSE",
+      "program": "International Economics and Finance",
+      "year": "2024",
+      "aliases": ["IEF", "Economics", "Finance", "International Economics", "LNSE"],
+      "language": "en",
+      "document_type": "brochure"
+    },
+    {
+      "file": "data/processed/MD/Brochure_LNSG_CPT.md",
+      "university_id": "LNSG",
+      "program": "Comptabilité",
+      "year": "2024",
+      "aliases": ["CPT", "Accounting", "Comptabilité", "LNSG"],
+      "language": "fr",
+      "document_type": "brochure"
+    },
+    {
+      "file": "data/processed/MD/Brochure_LNSG_FIN.md",
+      "university_id": "LNSG",
+      "program": "Finance",
+      "year": "2024",
+      "aliases": ["FIN", "Finance", "LNSG"],
+      "language": "fr",
+      "document_type": "brochure"
+    },
+    {
+      "file": "data/processed/MD/Brochure_LNSG_GRH.md",
+      "university_id": "LNSG",
+      "program": "Gestion des Ressources Humaines",
+      "year": "2024",
+      "aliases": ["GRH", "Human Resources", "HR", "Ressources Humaines", "LNSG"],
+      "language": "fr",
+      "document_type": "brochure"
+    },
+    {
+      "file": "data/processed/MD/Brochure_LNSG_Mgt.md",
+      "university_id": "LNSG",
+      "program": "Management",
+      "year": "2024",
+      "aliases": ["MGT", "Management", "Gestion", "LNSG"],
+      "language": "fr",
+      "document_type": "brochure"
+    },
+    {
+      "file": "data/processed/MD/Brochure_LNSG_Mkg.md",
+      "university_id": "LNSG",
+      "program": "Marketing",
+      "year": "2024",
+      "aliases": ["MKG", "Marketing", "LNSG"],
+      "language": "fr",
+      "document_type": "brochure"
+    }
+  ]
+}
