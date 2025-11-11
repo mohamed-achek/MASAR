@@ -98,6 +98,60 @@
       "aliases": ["MKG", "Marketing", "LNSG"],
       "language": "fr",
       "document_type": "brochure"
+    },
+    {
+      "file": "data/processed/MD/IPEIT-ProgrMP1.md",
+      "university_id": "IPEIT",
+      "program": "Mathématiques-Physique 1ère année",
+      "year": "2024",
+      "aliases": ["MP1", "Math-Physique", "Préparatoire MP", "IPEIT"],
+      "language": "fr",
+      "document_type": "program"
+    },
+    {
+      "file": "data/processed/MD/IPEIT-ProgrMP2.md",
+      "university_id": "IPEIT",
+      "program": "Mathématiques-Physique 2ème année",
+      "year": "2024",
+      "aliases": ["MP2", "Math-Physique", "Préparatoire MP", "IPEIT"],
+      "language": "fr",
+      "document_type": "program"
+    },
+    {
+      "file": "data/processed/MD/IPEIT-Progrpc1.md",
+      "university_id": "IPEIT",
+      "program": "Physique-Chimie 1ère année",
+      "year": "2024",
+      "aliases": ["PC1", "Physique-Chimie", "Préparatoire PC", "IPEIT"],
+      "language": "fr",
+      "document_type": "program"
+    },
+    {
+      "file": "data/processed/MD/IPEIT-ProgrPC2.md",
+      "university_id": "IPEIT",
+      "program": "Physique-Chimie 2ème année",
+      "year": "2024",
+      "aliases": ["PC2", "Physique-Chimie", "Préparatoire PC", "IPEIT"],
+      "language": "fr",
+      "document_type": "program"
+    },
+    {
+      "file": "data/processed/MD/COM-GD-02-01-Guide-etudiant-fmt-2024-ANGLAIS.md",
+      "university_id": "FMT",
+      "program": "Medicine Student Guide",
+      "year": "2024",
+      "aliases": ["FMT", "Medicine", "Medical School", "Faculty of Medicine Tunis"],
+      "language": "en",
+      "document_type": "handbook"
+    },
+    {
+      "file": "data/processed/MD/Formation-GInfo-ENSIT.md",
+      "university_id": "ENSIT",
+      "program": "Génie Informatique",
+      "year": "2024",
+      "aliases": ["ENSIT", "Computer Engineering", "Génie Informatique", "Software Engineering"],
+      "language": "fr",
+      "document_type": "program"
     }
   ]
 }
