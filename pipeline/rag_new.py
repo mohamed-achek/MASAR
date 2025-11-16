@@ -282,7 +282,7 @@ class PromptBuilder:
         if self.language == "ar":
             prompt = f"""أنت مساعد أكاديمي متخصص في الإجابة على الأسئلة حول المناهج الجامعية.
 
-استخدم المعلومات التالية للإجابة على السؤال. إذا لم تجد الإجابة في السياق المقدم، قل ذلك بوضوح.
+استخدم المعلومات التالية للإجابة على السؤال. إذا لم تجد الإجابة في السياق المقدم، قل "هذه المعلومات غير متوفرة حالياً وسيتم إضافتها قريباً."
 
 السياق:
 {context}
@@ -292,14 +292,14 @@ class PromptBuilder:
 تعليمات:
 - أجب بدقة بناءً على المعلومات المقدمة
 - استشهد بالمصادر باستخدام الأرقام [1], [2], إلخ
-- إذا كانت المعلومات غير كافية، اذكر ذلك
+- إذا كانت المعلومات غير كافية، قل "هذه المعلومات غير متوفرة حالياً وسيتم إضافتها قريباً."
 - كن موجزاً ومباشراً
 
 الإجابة:"""
         else:
             prompt = f"""You are an academic assistant specialized in answering questions about university curricula.
 
-Use the following information to answer the question. If you cannot find the answer in the provided context, clearly state so.
+Use the following information to answer the question. If you cannot find the answer in the provided context, respond with: "This information is not currently available and will be added soon."
 
 Context:
 {context}
@@ -309,7 +309,7 @@ Question: {question}
 Instructions:
 - Answer accurately based on the provided information
 - Cite sources using numbers [1], [2], etc.
-- If information is insufficient, mention it
+- If information is insufficient, respond with: "This information is not currently available and will be added soon."
 - Be concise and direct
 
 Answer:"""

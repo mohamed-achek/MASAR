@@ -52,6 +52,19 @@ async def load_chunks_from_metadata(
     program = metadata.get('program', 'Unknown')
     year = metadata.get('year', 'Unknown')
     
+    # Try to find the original MD file
+    original_file_path = None
+    possible_paths = [
+        Path('data/processed/MD') / source_file,
+        Path('data/raw/Universities') / university_id / source_file,
+        metadata_file.parent / source_file
+    ]
+    
+    for path in possible_paths:
+        if path.exists():
+            original_file_path = path
+            break
+    
     # Check if document already exists
     existing_doc = await get_document_by_source(session, source_file)
     
@@ -67,10 +80,22 @@ async def load_chunks_from_metadata(
     else:
         # Create document
         print(f"  📄 Creating document: {source_file}")
+        
+        # Read file content if available
+        file_content = None
+        if original_file_path and original_file_path.exists():
+            try:
+                with open(original_file_path, 'rb') as f:
+                    file_content = f.read()
+                print(f"  📥 Loaded file content: {len(file_content) / 1024:.2f} KB")
+            except Exception as e:
+                print(f"  ⚠️  Could not read file: {e}")
+        
         document = await store_document(
             session=session,
             source_file=source_file,
-            file_path=str(metadata_file.parent),
+            file_path=str(original_file_path) if original_file_path else str(metadata_file.parent),
+            file_content=file_content,
             university_id=university_id,
             program=program,
             year=year,
