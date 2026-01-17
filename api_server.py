@@ -50,34 +50,41 @@ HybridRetriever = None
 RAGPipeline = None
 LLMInterface = None
 
-try:
-    from pathlib import Path
-    print("🔄 Importing RAG modules...")
-    
-    # Import with full context
-    import sys
-    sys.path.insert(0, pipeline_dir)
-    
-    from retrieve import QueryEncoder as QE, Reranker as RR, HybridRetriever as HR
-    from rag_new import RAGPipeline as RP, LLMInterface as LI
-    
-    QueryEncoder = QE
-    Reranker = RR
-    HybridRetriever = HR
-    RAGPipeline = RP
-    LLMInterface = LI
-    
-    RAG_AVAILABLE = True
-    print("✅ RAG modules imported successfully")
-    print(f"   - QueryEncoder: {QueryEncoder}")
-    print(f"   - HybridRetriever: {HybridRetriever}")
-    print(f"   - RAGPipeline: {RAGPipeline}")
-except Exception as e:
-    print(f"❌ Error importing RAG system: {e}")
-    print(f"   Error type: {type(e).__name__}")
-    import traceback
-    traceback.print_exc()
+# Check SKIP_ML_MODELS early to avoid loading heavy models
+skip_ml_models = os.environ.get("SKIP_ML_MODELS", "false").lower() == "true"
+
+if skip_ml_models:
+    print("⚠️  SKIP_ML_MODELS=true - Skipping heavy model imports")
     RAG_AVAILABLE = False
+else:
+    try:
+        from pathlib import Path
+        print("🔄 Importing RAG modules...")
+        
+        # Import with full context
+        import sys
+        sys.path.insert(0, pipeline_dir)
+        
+        from retrieve import QueryEncoder as QE, Reranker as RR, HybridRetriever as HR
+        from rag_new import RAGPipeline as RP, LLMInterface as LI
+        
+        QueryEncoder = QE
+        Reranker = RR
+        HybridRetriever = HR
+        RAGPipeline = RP
+        LLMInterface = LI
+        
+        RAG_AVAILABLE = True
+        print("✅ RAG modules imported successfully")
+        print(f"   - QueryEncoder: {QueryEncoder}")
+        print(f"   - HybridRetriever: {HybridRetriever}")
+        print(f"   - RAGPipeline: {RAGPipeline}")
+    except Exception as e:
+        print(f"❌ Error importing RAG system: {e}")
+        print(f"   Error type: {type(e).__name__}")
+        import traceback
+        traceback.print_exc()
+        RAG_AVAILABLE = False
 
 # Import new app pipeline modules
 APP_PIPELINE_AVAILABLE = False
@@ -85,27 +92,33 @@ vector_retriever = None
 embedding_service = None
 app_reranker = None
 
-try:
-    print("🔄 Importing app pipeline modules...")
-    from app.input_handler import create_question_record
-    from app.retriever import VectorRetriever, DocumentChunk
-    
-    # Use shared utilities instead of duplicates
-    from utils.embedding_utils import SharedEmbeddingService
-    from utils.reranker_utils import SharedReranker
-    
-    APP_PIPELINE_AVAILABLE = True
-    print("✅ App pipeline modules imported successfully")
-except Exception as e:
-    print(f"❌ Error importing app pipeline modules: {e}")
+if skip_ml_models:
+    print("⚠️  SKIP_ML_MODELS=true - Skipping app pipeline imports")
+else:
+    try:
+        print("🔄 Importing app pipeline modules...")
+        from app.input_handler import create_question_record
+        from app.retriever import VectorRetriever, DocumentChunk
+        
+        # Use shared utilities instead of duplicates
+        from utils.embedding_utils import SharedEmbeddingService
+        from utils.reranker_utils import SharedReranker
+        
+        APP_PIPELINE_AVAILABLE = True
+        print("✅ App pipeline modules imported successfully")
+    except Exception as e:
+        print(f"❌ Error importing app pipeline modules: {e}")
     import traceback
     traceback.print_exc()
     APP_PIPELINE_AVAILABLE = False
 
-# Configuration
-SECRET_KEY = "your-secret-key-change-this-in-production"
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24 hours
+# Configuration - Load from environment variables for OpenShift compatibility
+SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-this-in-production")
+ALGORITHM = os.getenv("ALGORITHM", "HS256")
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440"))  # 24 hours default
+
+# CORS configuration - support multiple origins for OpenShift
+CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:3000,*").split(",")
 
 # Password hashing - using argon2 as it's more modern and doesn't have bcrypt's issues
 pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
@@ -114,10 +127,10 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 # Initialize FastAPI app
 app = FastAPI(title="Masar API", version="1.0.0")
 
-# CORS middleware
+# CORS middleware - configured for OpenShift deployment
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],  # React dev server
+    allow_origins=CORS_ORIGINS,  # Configured via environment variable
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -142,7 +155,7 @@ async def startup_event():
         import traceback
         traceback.print_exc()
     
-    if RAG_AVAILABLE:
+    if RAG_AVAILABLE and not skip_ml_models:
         try:
             from pathlib import Path
             
@@ -197,11 +210,14 @@ async def startup_event():
             import traceback
             traceback.print_exc()
             rag_pipeline = None
+    elif skip_ml_models:
+        print("⚠️  ML models loading disabled (SKIP_ML_MODELS=true)")
+        print("   Auth and database endpoints are available")
     else:
         print("⚠️  RAG modules not available")
     
     # Initialize new app pipeline components
-    if APP_PIPELINE_AVAILABLE:
+    if APP_PIPELINE_AVAILABLE and not skip_ml_models:
         try:
             print("🔄 Initializing app pipeline components...")
             
@@ -716,11 +732,32 @@ async def process_question(
 
 @app.get("/api/health")
 async def health_check():
-    """Health check endpoint"""
+    """
+    Health check endpoint for OpenShift liveness/readiness probes.
+    Returns status of all components.
+    """
+    import socket
+    
+    # Check database connectivity
+    db_status = "unknown"
+    try:
+        from database import engine
+        async with engine.connect() as conn:
+            await conn.execute("SELECT 1")
+        db_status = "connected"
+    except Exception as e:
+        db_status = f"error: {str(e)[:50]}"
+    
     return {
         "status": "healthy",
         "timestamp": datetime.utcnow().isoformat(),
-        "rag_available": rag_pipeline is not None
+        "hostname": socket.gethostname(),
+        "components": {
+            "rag_pipeline": "available" if rag_pipeline is not None else "unavailable",
+            "app_pipeline": "available" if APP_PIPELINE_AVAILABLE else "unavailable",
+            "database": db_status
+        },
+        "version": "1.0.0"
     }
 
 

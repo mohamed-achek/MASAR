@@ -1,0 +1,109 @@
+# =============================================================================
+# Masar Backend Dockerfile
+# Multi-stage build for FastAPI + RAG Pipeline
+# Optimized for OpenShift deployment
+# =============================================================================
+
+# Stage 1: Builder - Install dependencies
+FROM python:3.11-slim as builder
+
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    gcc \
+    g++ \
+    libpq-dev \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+# Copy requirements files
+COPY requirements.txt api_requirements.txt ./
+
+# Create virtual environment and install dependencies
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Install Python dependencies
+RUN pip install --upgrade pip && \
+    pip install -r requirements.txt && \
+    pip install -r api_requirements.txt && \
+    pip install asyncpg psycopg2-binary greenlet
+
+# =============================================================================
+# Stage 2: Runtime - Minimal production image
+# =============================================================================
+FROM python:3.11-slim as runtime
+
+# Labels for OpenShift
+LABEL io.k8s.description="Masar RAG Backend - FastAPI Application" \
+      io.k8s.display-name="Masar Backend" \
+      io.openshift.expose-services="8000:http" \
+      io.openshift.tags="python,fastapi,rag,masar" \
+      maintainer="Masar Team"
+
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app \
+    APP_HOME=/app \
+    # OpenShift runs containers as non-root, use arbitrary user
+    HOME=/app
+
+# Install runtime dependencies only
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq5 \
+    curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# Copy virtual environment from builder
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Create app directory with proper permissions for OpenShift
+# OpenShift runs as arbitrary UID, so we need group write permissions
+WORKDIR /app
+
+# Copy application code
+COPY api_server.py database.py database_rag_schema.py metadata_config.json ./
+COPY app/ ./app/
+COPY pipeline/ ./pipeline/
+COPY utils/ ./utils/
+
+# Create directories for data and logs with proper permissions
+# Data directories will be empty - data will be mounted via PVC in production
+# or loaded at runtime when ML models are enabled
+RUN mkdir -p /app/data/final/indices \
+             /app/data/final/embeddings \
+             /app/data/final/chunks \
+             /app/logs \
+    && chmod -R g+rwX /app \
+    && chgrp -R 0 /app
+
+# NOTE: Data files (FAISS indices and embeddings) are NOT included in the image
+# They will be mounted via PVC in production or loaded at runtime
+# This keeps the image size small and allows for data updates without rebuilding
+
+# Ensure all files are group-writable (OpenShift requirement)
+RUN chmod -R g+rwX /app && chgrp -R 0 /app
+
+# Health check endpoint
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:8000/api/health || exit 1
+
+# Expose the application port
+EXPOSE 8000
+
+# Run as non-root user (OpenShift will assign arbitrary UID)
+USER 1001
+
+# Start the application with uvicorn
+CMD ["uvicorn", "api_server:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]

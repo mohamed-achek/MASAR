@@ -1,0 +1,95 @@
+# =============================================================================
+# Masar Horizontal Pod Autoscaler (HPA)
+# Automatic scaling based on resource utilization
+# =============================================================================
+
+---
+# Backend HPA
+# Scales backend pods based on CPU and memory usage
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: masar-backend-hpa
+  labels:
+    app: masar
+    component: backend
+spec:
+  scaleTargetRef:
+    apiVersion: apps.openshift.io/v1
+    kind: DeploymentConfig
+    name: masar-backend
+  minReplicas: 2
+  maxReplicas: 5
+  metrics:
+    # Scale based on CPU utilization
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    # Scale based on memory utilization
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+  behavior:
+    # Scale up quickly when needed
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+        - type: Pods
+          value: 2
+          periodSeconds: 60
+        - type: Percent
+          value: 100
+          periodSeconds: 60
+      selectPolicy: Max
+    # Scale down slowly to avoid thrashing
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 120
+      selectPolicy: Min
+
+---
+# Frontend HPA (Optional)
+# Usually frontend is lightweight, but included for completeness
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: masar-frontend-hpa
+  labels:
+    app: masar
+    component: frontend
+spec:
+  scaleTargetRef:
+    apiVersion: apps.openshift.io/v1
+    kind: DeploymentConfig
+    name: masar-frontend
+  minReplicas: 2
+  maxReplicas: 4
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 80
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 120

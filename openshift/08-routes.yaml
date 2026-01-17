@@ -1,0 +1,61 @@
+# =============================================================================
+# Masar Routes
+# OpenShift-native external access configuration
+# =============================================================================
+
+---
+# Frontend Route (Primary)
+# Public access to the React application
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: masar-frontend
+  labels:
+    app: masar
+    component: frontend
+  annotations:
+    # Enable HAProxy features
+    haproxy.router.openshift.io/timeout: 60s
+    haproxy.router.openshift.io/balance: roundrobin
+spec:
+  # Leave host empty to use auto-generated hostname
+  # Or specify: host: masar.apps.your-cluster.example.com
+  to:
+    kind: Service
+    name: masar-frontend
+    weight: 100
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+  wildcardPolicy: None
+
+---
+# Backend Route (Optional - for direct API access/testing)
+# Can be disabled in production by removing this resource
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: masar-backend-api
+  labels:
+    app: masar
+    component: backend
+  annotations:
+    haproxy.router.openshift.io/timeout: 120s
+    # Description for documentation
+    description: "Direct API access route - for testing/development only"
+spec:
+  # Leave host empty for auto-generated hostname
+  # Or specify: host: masar-api.apps.your-cluster.example.com
+  path: /api
+  to:
+    kind: Service
+    name: masar-backend
+    weight: 100
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+  wildcardPolicy: None

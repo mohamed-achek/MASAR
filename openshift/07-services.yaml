@@ -1,0 +1,67 @@
+# =============================================================================
+# Masar Services
+# Internal networking for microservices communication
+# =============================================================================
+
+---
+# PostgreSQL Service
+# Internal service for database access
+apiVersion: v1
+kind: Service
+metadata:
+  name: masar-postgresql
+  labels:
+    app: masar
+    component: database
+spec:
+  type: ClusterIP
+  ports:
+    - port: 5432
+      targetPort: 5432
+      protocol: TCP
+      name: postgresql
+  selector:
+    app: masar
+    component: database
+
+---
+# Backend Service
+# Internal service for API access from frontend
+apiVersion: v1
+kind: Service
+metadata:
+  name: masar-backend
+  labels:
+    app: masar
+    component: backend
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8000
+      targetPort: 8000
+      protocol: TCP
+      name: http
+  selector:
+    app: masar
+    component: backend
+
+---
+# Frontend Service
+# Service for the React frontend (exposed via Route)
+apiVersion: v1
+kind: Service
+metadata:
+  name: masar-frontend
+  labels:
+    app: masar
+    component: frontend
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8080
+      targetPort: 8080
+      protocol: TCP
+      name: http
+  selector:
+    app: masar
+    component: frontend

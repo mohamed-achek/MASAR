@@ -1,0 +1,130 @@
+# =============================================================================
+# Masar Backend DeploymentConfig
+# FastAPI application with RAG pipeline
+# OpenShift-native with rolling deployment strategy
+# =============================================================================
+apiVersion: apps.openshift.io/v1
+kind: DeploymentConfig
+metadata:
+  name: masar-backend
+  labels:
+    app: masar
+    component: backend
+    tier: application
+spec:
+  replicas: 2
+  selector:
+    app: masar
+    component: backend
+  strategy:
+    type: Rolling
+    rollingParams:
+      updatePeriodSeconds: 1
+      intervalSeconds: 1
+      timeoutSeconds: 600
+      maxUnavailable: 25%
+      maxSurge: 25%
+  template:
+    metadata:
+      labels:
+        app: masar
+        component: backend
+        tier: application
+    spec:
+      containers:
+        - name: backend
+          image: masar-backend:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+              protocol: TCP
+              name: http
+          env:
+            # Database connection
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: masar-db-credentials
+                  key: database-url
+            # JWT Secret
+            - name: SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: masar-app-secrets
+                  key: jwt-secret
+            # Application settings from ConfigMap
+            - name: ALGORITHM
+              valueFrom:
+                configMapKeyRef:
+                  name: masar-backend-config
+                  key: jwt-algorithm
+            - name: ACCESS_TOKEN_EXPIRE_MINUTES
+              valueFrom:
+                configMapKeyRef:
+                  name: masar-backend-config
+                  key: access-token-expire-minutes
+            - name: LOG_LEVEL
+              valueFrom:
+                configMapKeyRef:
+                  name: masar-backend-config
+                  key: log-level
+            - name: WORKERS
+              valueFrom:
+                configMapKeyRef:
+                  name: masar-backend-config
+                  key: workers
+            # RAG Configuration
+            - name: RAG_INDEX_DIR
+              value: "/app/data/final/indices"
+            - name: RAG_EMBEDDINGS_DIR
+              value: "/app/data/final/embeddings"
+            - name: RAG_CHUNKS_DIR
+              value: "/app/data/final/chunks"
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "2Gi"
+              cpu: "1000m"
+          volumeMounts:
+            # FAISS indices and embeddings - persistent storage
+            - name: rag-data
+              mountPath: /app/data/final
+              readOnly: true
+            # Logs directory
+            - name: logs
+              mountPath: /app/logs
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 8000
+            initialDelaySeconds: 60
+            periodSeconds: 15
+            timeoutSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+      volumes:
+        - name: rag-data
+          persistentVolumeClaim:
+            claimName: masar-rag-data-pvc
+        - name: logs
+          emptyDir: {}
+  triggers:
+    - type: ConfigChange
+    - type: ImageChange
+      imageChangeParams:
+        automatic: true
+        containerNames:
+          - backend
+        from:
+          kind: ImageStreamTag
+          name: masar-backend:latest
+          namespace: masar

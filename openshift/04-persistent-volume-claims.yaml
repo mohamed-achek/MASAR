@@ -1,0 +1,45 @@
+# =============================================================================
+# Masar Persistent Volume Claims (PVCs)
+# Storage for PostgreSQL data and FAISS/RAG indices
+# =============================================================================
+
+---
+# PostgreSQL Data PVC
+# Stores database files persistently across pod restarts
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: masar-postgresql-pvc
+  labels:
+    app: masar
+    component: database
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+  # Use default storage class (dynamically provisioned)
+  # storageClassName: gp2  # Uncomment for AWS EBS
+  # storageClassName: managed-premium  # Uncomment for Azure
+
+---
+# RAG Data PVC
+# Stores FAISS indices, embeddings, and document chunks
+# ReadWriteMany allows multiple backend pods to read simultaneously
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: masar-rag-data-pvc
+  labels:
+    app: masar
+    component: rag-storage
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 10Gi
+  # Note: ReadWriteMany requires a storage class that supports it
+  # Examples: NFS, GlusterFS, CephFS, Azure Files, AWS EFS
+  # storageClassName: nfs  # Uncomment and adjust for your cluster

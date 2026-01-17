@@ -1,0 +1,45 @@
+# =============================================================================
+# Kustomization file for Masar OpenShift Deployment
+# Allows applying all resources with: oc apply -k openshift/
+# =============================================================================
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+metadata:
+  name: masar-application
+
+# Common labels applied to all resources
+commonLabels:
+  app: masar
+  project: it460
+
+# Resources to include (order matters for dependencies)
+resources:
+  # 1. Secrets (must be first - other resources depend on them)
+  - 05-secrets.yaml
+  
+  # 2. ConfigMaps
+  - 06-configmaps.yaml
+  
+  # 3. Persistent Volume Claims
+  - 04-persistent-volume-claims.yaml
+  
+  # 4. ImageStreams
+  - 10-imagestreams.yaml
+  
+  # 5. BuildConfigs
+  - 11-buildconfigs.yaml
+  
+  # 6. Services
+  - 07-services.yaml
+  
+  # 7. DeploymentConfigs (order: database → backend → frontend)
+  - 01-postgresql-deploymentconfig.yaml
+  - 02-backend-deploymentconfig.yaml
+  - 03-frontend-deploymentconfig.yaml
+  
+  # 8. Routes
+  - 08-routes.yaml
+  
+  # 9. Horizontal Pod Autoscalers
+  - 09-hpa.yaml

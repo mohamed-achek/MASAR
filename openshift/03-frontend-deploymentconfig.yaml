@@ -1,0 +1,79 @@
+# =============================================================================
+# Masar Frontend DeploymentConfig
+# React application served via nginx
+# OpenShift-native with rolling deployment strategy
+# =============================================================================
+apiVersion: apps.openshift.io/v1
+kind: DeploymentConfig
+metadata:
+  name: masar-frontend
+  labels:
+    app: masar
+    component: frontend
+    tier: presentation
+spec:
+  replicas: 2
+  selector:
+    app: masar
+    component: frontend
+  strategy:
+    type: Rolling
+    rollingParams:
+      updatePeriodSeconds: 1
+      intervalSeconds: 1
+      timeoutSeconds: 300
+      maxUnavailable: 25%
+      maxSurge: 25%
+  template:
+    metadata:
+      labels:
+        app: masar
+        component: frontend
+        tier: presentation
+    spec:
+      containers:
+        - name: frontend
+          image: masar-frontend:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+              protocol: TCP
+              name: http
+          env:
+            # Backend service URL for nginx proxy (resolved via OpenShift DNS)
+            - name: BACKEND_SERVICE_URL
+              value: "http://masar-backend:8000"
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "256Mi"
+              cpu: "200m"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+  triggers:
+    - type: ConfigChange
+    - type: ImageChange
+      imageChangeParams:
+        automatic: true
+        containerNames:
+          - frontend
+        from:
+          kind: ImageStreamTag
+          name: masar-frontend:latest
+          namespace: masar

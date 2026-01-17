@@ -40,19 +40,35 @@ async def store_document(
         university_id: University ID
         program: Program name
         year: Year
-        **kwargs: Additional metadata
+        **kwargs: Additional metadata (file_content, file_type, etc.)
         
     Returns:
         Created Document object
     """
+    # Read file content if file_path exists and file_content not provided
+    file_content = kwargs.get('file_content')
+    if file_content is None and file_path and Path(file_path).exists():
+        try:
+            with open(file_path, 'rb') as f:
+                file_content = f.read()
+        except Exception as e:
+            print(f"⚠️  Could not read file content: {e}")
+            file_content = None
+    
+    # Calculate file size if not provided
+    file_size = kwargs.get('file_size')
+    if file_size is None and file_content:
+        file_size = len(file_content)
+    
     document = Document(
         source_file=source_file,
         file_path=file_path,
+        file_content=file_content,
         file_type=kwargs.get('file_type', 'md'),
         university_id=university_id,
         program=program,
         year=year,
-        file_size=kwargs.get('file_size'),
+        file_size=file_size,
         num_pages=kwargs.get('num_pages'),
         num_chunks=kwargs.get('num_chunks', 0),
         meta_data=kwargs.get('metadata', {})
@@ -62,7 +78,8 @@ async def store_document(
     await session.commit()
     await session.refresh(document)
     
-    print(f"✅ Stored document: {source_file} (ID: {document.id})")
+    content_size = f"{len(file_content) / 1024:.2f} KB" if file_content else "No content"
+    print(f"✅ Stored document: {source_file} (ID: {document.id}, Content: {content_size})")
     return document
 
 
@@ -72,6 +89,50 @@ async def get_document_by_source(session: AsyncSession, source_file: str) -> Opt
         select(Document).where(Document.source_file == source_file)
     )
     return result.scalar_one_or_none()
+
+
+async def get_document_content(session: AsyncSession, document_id: int) -> Optional[bytes]:
+    """
+    Get the raw file content from database.
+    
+    Args:
+        session: Database session
+        document_id: Document ID
+        
+    Returns:
+        File content as bytes, or None if not found
+    """
+    result = await session.execute(
+        select(Document.file_content).where(Document.id == document_id)
+    )
+    return result.scalar_one_or_none()
+
+
+async def save_document_content(session: AsyncSession, document_id: int, file_path: str) -> str:
+    """
+    Save document content from database to disk.
+    
+    Args:
+        session: Database session
+        document_id: Document ID
+        file_path: Path where to save the file
+        
+    Returns:
+        Path to saved file
+    """
+    content = await get_document_content(session, document_id)
+    
+    if content is None:
+        raise ValueError(f"No content found for document ID {document_id}")
+    
+    output_path = Path(file_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    with open(output_path, 'wb') as f:
+        f.write(content)
+    
+    print(f"✅ Saved document content to: {output_path}")
+    return str(output_path)
 
 
 async def get_documents(

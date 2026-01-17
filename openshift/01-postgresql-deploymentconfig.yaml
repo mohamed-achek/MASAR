@@ -1,0 +1,95 @@
+# =============================================================================
+# PostgreSQL Deployment for Masar Application
+# OpenShift-native deployment with persistent storage
+# =============================================================================
+apiVersion: apps.openshift.io/v1
+kind: DeploymentConfig
+metadata:
+  name: masar-postgresql
+  labels:
+    app: masar
+    component: database
+    tier: backend
+spec:
+  replicas: 1
+  selector:
+    app: masar
+    component: database
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: masar
+        component: database
+        tier: backend
+    spec:
+      containers:
+        - name: postgresql
+          image: registry.redhat.io/rhel8/postgresql-15:latest
+          ports:
+            - containerPort: 5432
+              protocol: TCP
+          env:
+            - name: POSTGRESQL_USER
+              valueFrom:
+                secretKeyRef:
+                  name: masar-db-credentials
+                  key: database-user
+            - name: POSTGRESQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: masar-db-credentials
+                  key: database-password
+            - name: POSTGRESQL_DATABASE
+              valueFrom:
+                secretKeyRef:
+                  name: masar-db-credentials
+                  key: database-name
+            - name: POSTGRESQL_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: masar-db-credentials
+                  key: database-admin-password
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          volumeMounts:
+            - name: postgresql-data
+              mountPath: /var/lib/pgsql/data
+          livenessProbe:
+            tcpSocket:
+              port: 5432
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - pg_isready -U $POSTGRESQL_USER -d $POSTGRESQL_DATABASE -h localhost
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+      volumes:
+        - name: postgresql-data
+          persistentVolumeClaim:
+            claimName: masar-postgresql-pvc
+  triggers:
+    - type: ConfigChange
+    - type: ImageChange
+      imageChangeParams:
+        automatic: true
+        containerNames:
+          - postgresql
+        from:
+          kind: ImageStreamTag
+          name: postgresql:15-el8
+          namespace: openshift

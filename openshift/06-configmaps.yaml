@@ -1,0 +1,46 @@
+# =============================================================================
+# Masar ConfigMaps
+# Non-sensitive configuration data
+# =============================================================================
+
+---
+# Backend Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: masar-backend-config
+  labels:
+    app: masar
+    component: backend
+data:
+  # JWT Settings
+  jwt-algorithm: "HS256"
+  access-token-expire-minutes: "1440"  # 24 hours
+  
+  # Application Settings
+  log-level: "INFO"
+  workers: "2"
+  
+  # RAG Pipeline Settings
+  rag-top-k: "5"
+  rag-rerank: "true"
+  
+  # CORS Settings (adjust for production)
+  cors-origins: "*"
+
+---
+# Frontend Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: masar-frontend-config
+  labels:
+    app: masar
+    component: frontend
+data:
+  # API endpoint (relative path, proxied by nginx)
+  api-url: "/api"
+  # Application name
+  app-name: "Masar"
+  # Feature flags
+  enable-analytics: "false"

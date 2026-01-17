@@ -1,0 +1,72 @@
+# =============================================================================
+# Masar BuildConfigs
+# OpenShift-native image building from source
+# =============================================================================
+
+---
+# Backend BuildConfig
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  name: masar-backend
+  labels:
+    app: masar
+    component: backend
+spec:
+  source:
+    type: Binary
+    binary: {}
+  strategy:
+    type: Docker
+    dockerStrategy:
+      dockerfilePath: Dockerfile.backend
+      env:
+        - name: DOCKER_BUILDKIT
+          value: "1"
+  output:
+    to:
+      kind: ImageStreamTag
+      name: masar-backend:latest
+  triggers:
+    - type: ConfigChange
+  resources:
+    limits:
+      memory: "2Gi"
+      cpu: "1"
+    requests:
+      memory: "1Gi"
+      cpu: "500m"
+
+---
+# Frontend BuildConfig
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  name: masar-frontend
+  labels:
+    app: masar
+    component: frontend
+spec:
+  source:
+    type: Binary
+    binary: {}
+  strategy:
+    type: Docker
+    dockerStrategy:
+      dockerfilePath: Dockerfile.frontend
+      buildArgs:
+        - name: VITE_API_URL
+          value: "/api"
+  output:
+    to:
+      kind: ImageStreamTag
+      name: masar-frontend:latest
+  triggers:
+    - type: ConfigChange
+  resources:
+    limits:
+      memory: "1Gi"
+      cpu: "500m"
+    requests:
+      memory: "512Mi"
+      cpu: "250m"

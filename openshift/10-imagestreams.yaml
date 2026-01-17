@@ -1,0 +1,48 @@
+# =============================================================================
+# Masar ImageStreams
+# OpenShift image management for backend and frontend
+# =============================================================================
+
+---
+# Backend ImageStream
+apiVersion: image.openshift.io/v1
+kind: ImageStream
+metadata:
+  name: masar-backend
+  labels:
+    app: masar
+    component: backend
+spec:
+  lookupPolicy:
+    local: true
+  tags:
+    - name: latest
+      from:
+        kind: DockerImage
+        name: masar-backend:latest
+      importPolicy:
+        scheduled: true
+      referencePolicy:
+        type: Source
+
+---
+# Frontend ImageStream
+apiVersion: image.openshift.io/v1
+kind: ImageStream
+metadata:
+  name: masar-frontend
+  labels:
+    app: masar
+    component: frontend
+spec:
+  lookupPolicy:
+    local: true
+  tags:
+    - name: latest
+      from:
+        kind: DockerImage
+        name: masar-frontend:latest
+      importPolicy:
+        scheduled: true
+      referencePolicy:
+        type: Source

@@ -9,6 +9,7 @@ This module handles:
 - Handling different question types
 """
 
+import os
 import json
 from typing import List, Dict, Any, Optional
 from pathlib import Path
@@ -73,14 +74,20 @@ class ContextAssembler:
             # Format section
             section = f"{citation} "
             
-            # Add metadata header
+            # Add metadata header with CLEAR university identification
             if include_metadata:
                 meta_obj = metadata.get('metadata', metadata)
                 section_title = metadata.get('section_title', 'N/A')
                 university = meta_obj.get('university_id', 'N/A')
                 program = meta_obj.get('program', 'N/A')
+                source_file = meta_obj.get('source_file', 'N/A')
                 
-                section += f"[{university} - {program} - {section_title}]\n"
+                # Make university identification very prominent
+                section += f"🏫 UNIVERSITY: {university}\n"
+                section += f"📚 Program: {program}\n"
+                section += f"📄 Source: {source_file}\n"
+                section += f"📑 Section: {section_title}\n"
+                section += "-" * 40 + "\n"
             
             # Add text
             section += text
@@ -91,8 +98,8 @@ class ContextAssembler:
             
             context_parts.append(section)
         
-        # Join all parts
-        context = "\n\n---\n\n".join(context_parts)
+        # Join all parts with clear separators
+        context = "\n\n" + "="*50 + "\n\n".join(context_parts)
         
         # TODO: Truncate to max_context_tokens if needed
         # For now, return as is
@@ -292,6 +299,9 @@ class PromptBuilder:
 تعليمات:
 - أجب بدقة بناءً على المعلومات المقدمة
 - استشهد بالمصادر باستخدام الأرقام [1], [2], إلخ
+- ⚠️ مهم جداً: كل مصدر يأتي من جامعة/مؤسسة مختلفة. لا تخلط بين المعلومات من جامعات مختلفة
+- عند الإجابة، حدد بوضوح أي جامعة تنطبق عليها كل معلومة
+- إذا سأل المستخدم عن جامعة معينة، أجب فقط بالمعلومات الخاصة بتلك الجامعة
 - إذا كانت المعلومات غير كافية، قل "هذه المعلومات غير متوفرة حالياً وسيتم إضافتها قريباً."
 - كن موجزاً ومباشراً
 
@@ -309,6 +319,9 @@ Question: {question}
 Instructions:
 - Answer accurately based on the provided information
 - Cite sources using numbers [1], [2], etc.
+- ⚠️ CRITICAL: Each source comes from a DIFFERENT university/institution. DO NOT mix information from different universities
+- When answering, clearly specify which university each piece of information applies to
+- If the user asks about a specific university, only answer with information from that university
 - If information is insufficient, respond with: "This information is not currently available and will be added soon."
 - Be concise and direct
 
@@ -395,7 +408,8 @@ class LLMInterface:
         model: str = "gpt-4",
         api_key: Optional[str] = None,
         temperature: float = 0.3,
-        max_tokens: int = 1000
+        max_tokens: int = 1000,
+        ollama_host: Optional[str] = None
     ):
         """
         Initialize LLM interface.
@@ -406,11 +420,14 @@ class LLMInterface:
             api_key: API key (if required)
             temperature: Sampling temperature
             max_tokens: Maximum tokens in response
+            ollama_host: Ollama server host (default: localhost:11434 or OLLAMA_HOST env var)
         """
         self.provider = provider
         self.model = model
         self.temperature = temperature
         self.max_tokens = max_tokens
+        # Get Ollama host from parameter, env var, or default
+        self.ollama_host = ollama_host or os.environ.get("OLLAMA_HOST", "localhost:11434")
         
         # Initialize client
         if provider == "openai":
@@ -424,13 +441,13 @@ class LLMInterface:
             self.client = anthropic.Anthropic(api_key=api_key)
             
         elif provider == "ollama":
-            # Use local Ollama server
+            # Use Ollama server (local or remote via OLLAMA_HOST env var)
             self.client = None
             
         else:
             raise ValueError(f"Unknown provider: {provider}")
         
-        print(f"✅ LLM initialized: {provider} - {model}")
+        print(f"✅ LLM initialized: {provider} - {model}" + (f" @ {self.ollama_host}" if provider == "ollama" else ""))
     
     def generate(self, prompt: str) -> str:
         """
@@ -463,8 +480,9 @@ class LLMInterface:
         elif self.provider == "ollama":
             # Use Ollama API
             import requests
+            ollama_url = f"http://{self.ollama_host}/api/generate"
             response = requests.post(
-                "http://localhost:11434/api/generate",
+                ollama_url,
                 json={
                     "model": self.model,
                     "prompt": prompt,

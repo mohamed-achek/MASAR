@@ -1,0 +1,101 @@
+# =============================================================================
+# Masar RAG Application - Docker Compose
+# Local development environment mirroring OpenShift deployment
+# =============================================================================
+version: '3.8'
+
+services:
+  # =========================================================================
+  # PostgreSQL Database
+  # =========================================================================
+  postgresql:
+    image: postgres:15-alpine
+    container_name: masar-postgresql
+    environment:
+      POSTGRES_USER: masar_user
+      POSTGRES_PASSWORD: MasarSecurePass2024!
+      POSTGRES_DB: masar_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U masar_user -d masar_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - masar-network
+
+  # =========================================================================
+  # Backend (FastAPI + RAG Pipeline)
+  # =========================================================================
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: masar-backend
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://masar_user:MasarSecurePass2024!@postgresql:5432/masar_db
+      - SECRET_KEY=masar-jwt-secret-key-change-in-production-2024
+      - ALGORITHM=HS256
+      - ACCESS_TOKEN_EXPIRE_MINUTES=1440
+      - CORS_ORIGINS=http://localhost:3000,http://localhost:8080,*
+      - LOG_LEVEL=INFO
+      - WORKERS=2
+    volumes:
+      - ./data/final:/app/data/final:ro
+      - backend_logs:/app/logs
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgresql:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3
+    networks:
+      - masar-network
+
+  # =========================================================================
+  # Frontend (React + nginx)
+  # =========================================================================
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+      args:
+        VITE_API_URL: /api
+    container_name: masar-frontend
+    environment:
+      - BACKEND_SERVICE_URL=http://backend:8000
+    ports:
+      - "8080:8080"
+    depends_on:
+      - backend
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - masar-network
+
+# =============================================================================
+# Networks
+# =============================================================================
+networks:
+  masar-network:
+    driver: bridge
+
+# =============================================================================
+# Volumes
+# =============================================================================
+volumes:
+  postgres_data:
+    name: masar-postgres-data
+  backend_logs:
+    name: masar-backend-logs
