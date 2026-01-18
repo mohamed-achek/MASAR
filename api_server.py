@@ -142,18 +142,32 @@ async def startup_event():
     """Initialize database and RAG system on application startup."""
     global rag_pipeline, vector_retriever, embedding_service, app_reranker
     
-    # Initialize database
-    try:
-        print("🔄 Initializing database...")
-        # Use async versions directly since we're in an async context
-        from database import _async_init_db, _async_create_default_user
-        await _async_init_db()
-        await _async_create_default_user()
-        print("✅ Database ready")
-    except Exception as e:
-        print(f"❌ Error initializing database: {e}")
-        import traceback
-        traceback.print_exc()
+    # Initialize database with retries
+    max_retries = 10
+    retry_delay = 3  # seconds
+    db_initialized = False
+    
+    for attempt in range(1, max_retries + 1):
+        try:
+            print(f"🔄 Initializing database... (attempt {attempt}/{max_retries})")
+            # Use async versions directly since we're in an async context
+            from database import _async_init_db, _async_create_default_user
+            await _async_init_db()
+            await _async_create_default_user()
+            print("✅ Database ready")
+            db_initialized = True
+            break
+        except Exception as e:
+            print(f"❌ Error initializing database (attempt {attempt}): {e}")
+            import traceback
+            traceback.print_exc()
+            if attempt < max_retries:
+                print(f"⏳ Retrying in {retry_delay}s...")
+                await asyncio.sleep(retry_delay)
+            else:
+                print(f"❌ Failed to initialize database after {max_retries} attempts")
+                print("⚠️  Continuing startup - health checks may fail if database remains unavailable")
+                db_initialized = False
     
     if RAG_AVAILABLE and not skip_ml_models:
         try:
@@ -734,20 +748,31 @@ async def process_question(
 async def health_check():
     """
     Health check endpoint for OpenShift liveness/readiness probes.
-    Returns status of all components.
+    Returns status of all components with timeouts.
     """
     import socket
+    from sqlalchemy import text
     
-    # Check database connectivity
+    # Check database connectivity with timeout
     db_status = "unknown"
     try:
         from database import engine
-        async with engine.connect() as conn:
-            await conn.execute("SELECT 1")
+        # Use asyncio.wait_for to add a timeout to prevent hanging
+        async def check_db():
+            async with engine.connect() as conn:
+                await conn.execute(text("SELECT 1"))
+        
+        await asyncio.wait_for(check_db(), timeout=5.0)
         db_status = "connected"
+    except asyncio.TimeoutError:
+        db_status = "timeout"
+        print("⚠️  Database health check timed out (5s)")
     except Exception as e:
         db_status = f"error: {str(e)[:50]}"
+        print(f"⚠️  Database health check failed: {e}")
     
+    # Always return healthy to prevent cascading pod failures
+    # The components status shows actual health
     return {
         "status": "healthy",
         "timestamp": datetime.utcnow().isoformat(),

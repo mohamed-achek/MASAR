@@ -12,12 +12,12 @@ metadata:
     component: backend
     tier: application
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     app: masar
     component: backend
   strategy:
-    type: Rolling
+    type: Recreate
     rollingParams:
       updatePeriodSeconds: 1
       intervalSeconds: 1
@@ -31,6 +31,28 @@ spec:
         component: backend
         tier: application
     spec:
+      # Wait for PostgreSQL to be ready before starting the backend
+      initContainers:
+        - name: wait-for-db
+          image: busybox:1.35
+          command:
+            - sh
+            - -c
+            - |
+              echo "⏳ Waiting for PostgreSQL to be ready..."
+              count=0
+              max_attempts=30
+              while [ $count -lt $max_attempts ]; do
+                if nc -z masar-postgresql 5432 2>/dev/null; then
+                  echo "✅ PostgreSQL is ready!"
+                  exit 0
+                fi
+                count=$((count + 1))
+                echo "📍 PostgreSQL not ready (attempt $count/$max_attempts), retrying in 2s..."
+                sleep 2
+              done
+              echo "⚠️  PostgreSQL still not ready after $max_attempts attempts, but continuing..."
+              exit 0
       containers:
         - name: backend
           image: masar-backend:latest
@@ -99,16 +121,16 @@ spec:
             httpGet:
               path: /api/health
               port: 8000
-            initialDelaySeconds: 60
-            periodSeconds: 15
+            initialDelaySeconds: 90
+            periodSeconds: 30
             timeoutSeconds: 10
-            failureThreshold: 3
+            failureThreshold: 5
           readinessProbe:
             httpGet:
               path: /api/health
               port: 8000
-            initialDelaySeconds: 30
-            periodSeconds: 10
+            initialDelaySeconds: 45
+            periodSeconds: 15
             timeoutSeconds: 5
             failureThreshold: 3
       volumes:

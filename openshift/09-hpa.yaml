@@ -18,8 +18,8 @@ spec:
     apiVersion: apps.openshift.io/v1
     kind: DeploymentConfig
     name: masar-backend
-  minReplicas: 2
-  maxReplicas: 5
+  minReplicas: 1
+  maxReplicas: 3
   metrics:
     # Scale based on CPU utilization
     - type: Resource
