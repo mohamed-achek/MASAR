@@ -1,0 +1,47 @@
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  name: masar-embedder-build
+  labels:
+    app: masar
+spec:
+  source:
+    type: Git
+    git:
+      uri: "${GIT_REPO_URL}"
+      ref: main
+    contextDir: services/embedder
+  strategy:
+    type: Docker
+    dockerStrategy:
+      dockerfilePath: Dockerfile
+  output:
+    to:
+      kind: ImageStreamTag
+      name: masar-embedder:latest
+  triggers:
+    - type: ConfigChange
+---
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  name: masar-reranker-build
+  labels:
+    app: masar
+spec:
+  source:
+    type: Git
+    git:
+      uri: "${GIT_REPO_URL}"
+      ref: main
+    contextDir: services/reranker
+  strategy:
+    type: Docker
+    dockerStrategy:
+      dockerfilePath: Dockerfile
+  output:
+    to:
+      kind: ImageStreamTag
+      name: masar-reranker:latest
+  triggers:
+    - type: ConfigChange

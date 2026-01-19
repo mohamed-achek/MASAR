@@ -1,16 +1,30 @@
 """
 Shared embedding service using BGE-M3 model.
 Implements singleton pattern to avoid loading model multiple times.
+
+Supports two modes:
+- Local mode (default): Loads model locally in the backend pod
+- Distributed mode: Uses HTTP client to call embedder microservice
+
+Set USE_EMBEDDER_SERVICE=true to enable distributed mode.
 """
 
+import os
 import torch
-from transformers import AutoTokenizer, AutoModel
 from typing import List, Union
 import numpy as np
 
+# Check if we should use the microservice
+USE_EMBEDDER_SERVICE = os.getenv("USE_EMBEDDER_SERVICE", "false").lower() == "true"
+
 
 class SharedEmbeddingService:
-    """Singleton embedding service using BGE-M3."""
+    """
+    Singleton embedding service using BGE-M3.
+    
+    Automatically switches between local and distributed mode based on
+    USE_EMBEDDER_SERVICE environment variable.
+    """
     
     _instance = None
     _initialized = False
@@ -26,16 +40,29 @@ class SharedEmbeddingService:
             return
         
         self.model_name = model_name
-        self.device = device or ('cuda' if torch.cuda.is_available() else 'cpu')
+        self._use_service = USE_EMBEDDER_SERVICE
         
-        print(f"Loading BGE-M3 model on {self.device}...")
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        self.model = AutoModel.from_pretrained(model_name)
-        self.model.to(self.device)
-        self.model.eval()
-        
-        self._initialized = True
-        print(f"✅ BGE-M3 model loaded successfully")
+        if self._use_service:
+            # Distributed mode - use HTTP client
+            print(f"🔗 Using embedder microservice (USE_EMBEDDER_SERVICE=true)")
+            from utils.embedder_client import SyncEmbedderClient
+            self._client = SyncEmbedderClient()
+            self.device = "remote"
+            self._initialized = True
+            print(f"✅ Embedder client configured")
+        else:
+            # Local mode - load model directly
+            from transformers import AutoTokenizer, AutoModel
+            self.device = device or ('cuda' if torch.cuda.is_available() else 'cpu')
+            
+            print(f"Loading BGE-M3 model on {self.device}...")
+            self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+            self.model = AutoModel.from_pretrained(model_name)
+            self.model.to(self.device)
+            self.model.eval()
+            
+            self._initialized = True
+            print(f"✅ BGE-M3 model loaded successfully")
     
     def encode(
         self,
@@ -59,6 +86,11 @@ class SharedEmbeddingService:
         if isinstance(texts, str):
             texts = [texts]
         
+        # Use microservice if configured
+        if self._use_service:
+            return self._client.encode(texts, normalize=normalize, max_length=max_length)
+        
+        # Local mode - run model directly
         all_embeddings = []
         
         with torch.no_grad():
@@ -107,8 +139,16 @@ class SharedEmbeddingService:
         
         return sum_embeddings / sum_mask
     
+    def is_ready(self) -> bool:
+        """Check if the service is ready."""
+        if self._use_service:
+            return self._client.is_ready()
+        return self._initialized
+    
     def __del__(self):
         """Cleanup when object is destroyed."""
+        if hasattr(self, '_use_service') and self._use_service:
+            return  # No cleanup needed for service client
         if hasattr(self, 'model'):
             del self.model
             del self.tokenizer

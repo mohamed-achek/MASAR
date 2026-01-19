@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: masar-embedder-cache-pvc
+  labels:
+    app: masar
+    component: embedder
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi  # Space for BGE-M3 (~2-3GB)
+  storageClassName: gp3
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: masar-reranker-cache-pvc
+  labels:
+    app: masar
+    component: reranker
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi  # Space for Reranker (~1.5GB)
+  storageClassName: gp3

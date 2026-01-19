@@ -1,0 +1,19 @@
+apiVersion: image.openshift.io/v1
+kind: ImageStream
+metadata:
+  name: masar-embedder
+  labels:
+    app: masar
+spec:
+  lookupPolicy:
+    local: true
+---
+apiVersion: image.openshift.io/v1
+kind: ImageStream
+metadata:
+  name: masar-reranker
+  labels:
+    app: masar
+spec:
+  lookupPolicy:
+    local: true

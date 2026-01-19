@@ -1,0 +1,84 @@
+apiVersion: apps.openshift.io/v1
+kind: DeploymentConfig
+metadata:
+  name: masar-reranker
+  labels:
+    app: masar
+    component: reranker
+spec:
+  replicas: 1
+  selector:
+    app: masar
+    component: reranker
+  template:
+    metadata:
+      labels:
+        app: masar
+        component: reranker
+    spec:
+      containers:
+        - name: reranker
+          image: masar-reranker:latest
+          ports:
+            - containerPort: 8002
+              protocol: TCP
+          env:
+            - name: RERANKER_MODEL
+              value: "BAAI/bge-reranker-large"
+            - name: DEVICE
+              value: "cpu"
+            - name: PORT
+              value: "8002"
+            # HuggingFace cache directory
+            - name: HF_HOME
+              value: "/app/cache/huggingface"
+            - name: TRANSFORMERS_CACHE
+              value: "/app/cache/huggingface"
+          resources:
+            requests:
+              memory: "1Gi"
+              cpu: "250m"
+            limits:
+              memory: "2Gi"
+              cpu: "1000m"
+          volumeMounts:
+            - name: model-cache
+              mountPath: /app/cache
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8002
+            initialDelaySeconds: 120
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8002
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8002
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 30  # Allow up to 5 minutes for model loading
+      volumes:
+        - name: model-cache
+          persistentVolumeClaim:
+            claimName: masar-reranker-cache-pvc
+  triggers:
+    - type: ConfigChange
+    - type: ImageChange
+      imageChangeParams:
+        automatic: true
+        containerNames:
+          - reranker
+        from:
+          kind: ImageStreamTag
+          name: masar-reranker:latest

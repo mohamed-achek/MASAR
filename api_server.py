@@ -546,7 +546,7 @@ async def query_rag(
 @app.post("/api/rag/query-stream")
 async def query_rag_stream(
     query: RAGQuery,
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_optional_user)
 ):
     """Query the RAG system with streaming response"""
     if not rag_pipeline:

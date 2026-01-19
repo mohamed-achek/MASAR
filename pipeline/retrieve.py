@@ -20,13 +20,17 @@ from transformers import AutoTokenizer, AutoModel
 from sentence_transformers import CrossEncoder
 import faiss
 
+# Check if we should use the microservices
+USE_EMBEDDER_SERVICE = os.getenv("USE_EMBEDDER_SERVICE", "false").lower() == "true"
+USE_RERANKER_SERVICE = os.getenv("USE_RERANKER_SERVICE", "false").lower() == "true"
+
 
 # ============================================================================
 # QUERY ENCODER
 # ============================================================================
 
 class QueryEncoder:
-    """Encode queries using BGE-M3."""
+    """Encode queries using BGE-M3 (local or remote)."""
     
     def __init__(
         self,
@@ -40,17 +44,28 @@ class QueryEncoder:
             model_name: BGE-M3 model name
             device: Device to use
         """
-        # Force CPU mode
-        os.environ["CUDA_VISIBLE_DEVICES"] = ""
-        self.device = torch.device("cpu")
+        self.model_name = model_name
+        self._use_service = USE_EMBEDDER_SERVICE
         
-        print(f"Loading query encoder: {model_name}")
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        self.model = AutoModel.from_pretrained(model_name)
-        self.model = self.model.to(self.device)
-        self.model.eval()
-        
-        print(f"✅ Query encoder loaded on {self.device}")
+        if self._use_service:
+            # Use embedder microservice
+            print(f"🔗 Using embedder microservice for query encoding")
+            from utils.embedder_client import SyncEmbedderClient
+            self._client = SyncEmbedderClient()
+            self.device = "remote"
+            print(f"✅ Query encoder (remote) configured")
+        else:
+            # Load model locally
+            os.environ["CUDA_VISIBLE_DEVICES"] = ""
+            self.device = torch.device("cpu")
+            
+            print(f"Loading query encoder: {model_name}")
+            self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+            self.model = AutoModel.from_pretrained(model_name)
+            self.model = self.model.to(self.device)
+            self.model.eval()
+            
+            print(f"✅ Query encoder loaded on {self.device}")
     
     def mean_pooling(self, model_output, attention_mask):
         """Apply mean pooling."""
@@ -68,6 +83,11 @@ class QueryEncoder:
         Returns:
             Query embedding (1D numpy array)
         """
+        if self._use_service:
+            # Use remote embedder service
+            embeddings = self._client.encode([query])
+            return np.array(embeddings[0], dtype=np.float32)
+        
         # Tokenize
         encoded = self.tokenizer(
             [query],
@@ -94,7 +114,7 @@ class QueryEncoder:
 # ============================================================================
 
 class Reranker:
-    """BGE reranker for result refinement."""
+    """BGE reranker for result refinement (local or remote)."""
     
     def __init__(
         self,
@@ -108,12 +128,22 @@ class Reranker:
             model_name: BGE reranker model name
             device: Device to use
         """
-        # Force CPU mode
-        os.environ["CUDA_VISIBLE_DEVICES"] = ""
+        self.model_name = model_name
+        self._use_service = USE_RERANKER_SERVICE
         
-        print(f"Loading reranker: {model_name}")
-        self.model = CrossEncoder(model_name, device=device)
-        print(f"✅ Reranker loaded on {device}")
+        if self._use_service:
+            # Use reranker microservice
+            print(f"🔗 Using reranker microservice")
+            from utils.reranker_client import SyncRerankerClient
+            self._client = SyncRerankerClient()
+            print(f"✅ Reranker (remote) configured")
+        else:
+            # Load model locally
+            os.environ["CUDA_VISIBLE_DEVICES"] = ""
+            
+            print(f"Loading reranker: {model_name}")
+            self.model = CrossEncoder(model_name, device=device)
+            print(f"✅ Reranker loaded on {device}")
     
     def rerank(
         self,
@@ -132,6 +162,22 @@ class Reranker:
         Returns:
             List of (index, score) tuples sorted by score
         """
+        if self._use_service:
+            # Use remote reranker service - store original index in metadata
+            doc_objs = [{"text": doc, "metadata": {"_idx": i}} for i, doc in enumerate(documents)]
+            results = self._client.rerank(query, doc_objs, top_k=len(documents) if top_k is None else top_k)
+            # Convert results to (index, score) format using stored index
+            scored = []
+            for r in results:
+                idx = r.get("_idx", -1)
+                if idx >= 0:
+                    scored.append((idx, r.get("rerank_score", 0.0)))
+            # Sort by score descending
+            scored.sort(key=lambda x: x[1], reverse=True)
+            if top_k:
+                return scored[:top_k]
+            return scored
+        
         # Create query-document pairs
         pairs = [[query, doc] for doc in documents]
         
