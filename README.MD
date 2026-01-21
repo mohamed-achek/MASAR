@@ -46,66 +46,6 @@
 
 > ⚠️ **Note:** RAG/semantic search is disabled on OpenShift due to Developer Sandbox memory limits (7Gi). Full RAG functionality is available in local Docker Compose deployment with Ollama.
 
----
-
-## 📁 Project Structure
-
-```
-masar/
-├── api_server.py              # FastAPI backend application
-├── database.py                # SQLAlchemy database models
-├── docker-compose.yml         # Local development setup
-├── Dockerfile.backend         # Backend container image
-├── Dockerfile.frontend        # Frontend container image
-├── requirements.txt           # Python dependencies (RAG)
-├── api_requirements.txt       # Python dependencies (API)
-│
-├── app/                       # Application modules
-│   ├── input_handler.py       # Query preprocessing
-│   ├── intent_ner.py          # Intent recognition
-│   ├── preprocessing.py       # Text preprocessing
-│   └── retriever.py           # Document retrieval
-│
-├── pipeline/                  # RAG pipeline components
-│   ├── embedding.py           # Vector embeddings
-│   ├── retrieve.py            # FAISS retrieval
-│   ├── rag_new.py             # RAG orchestration
-│   └── table_processor.py     # PDF table extraction
-│
-├── frontend/                  # React application
-│   ├── src/
-│   │   ├── App.jsx
-│   │   ├── pages/
-│   │   ├── components/
-│   │   └── store/
-│   └── package.json
-│
-├── openshift/                 # OpenShift manifests
-│   ├── README.md              # Deployment guide
-│   ├── deploy.sh              # Automated deployment
-│   ├── 01-postgresql-*.yaml   # Database deployment
-│   ├── 02-backend-*.yaml      # Backend deployment
-│   ├── 03-frontend-*.yaml     # Frontend deployment
-│   ├── 04-persistent-*.yaml   # Storage (PVCs)
-│   ├── 05-secrets.yaml        # Credentials
-│   ├── 06-configmaps.yaml     # Configuration
-│   ├── 07-services.yaml       # Internal networking
-│   ├── 08-routes.yaml         # External access
-│   └── 09-hpa.yaml            # Auto-scaling
-│
-├── data/                      # RAG data directory
-│   ├── raw/                   # Source documents
-│   ├── processed/             # Preprocessed data
-│   └── final/                 # Production indices
-│       ├── chunks/            # Document chunks
-│       ├── embeddings/        # Vector embeddings
-│       └── indices/           # FAISS indices
-│
-└── docs/                      # Documentation
-    └── IT460_Final_Report.tex # LaTeX project report
-```
-
----
 
 ## 🛠️ Technology Stack
 
