@@ -1,0 +1,164 @@
+apiVersion: image.openshift.io/v1
+kind: ImageStream
+metadata:
+  name: masar-auth
+  labels:
+    app: masar
+    component: auth
+---
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  name: masar-auth
+  labels:
+    app: masar
+    component: auth
+spec:
+  output:
+    to:
+      kind: ImageStreamTag
+      name: masar-auth:latest
+  source:
+    type: Binary
+  strategy:
+    type: Docker
+    dockerStrategy:
+      dockerfilePath: Dockerfile.auth
+  triggers:
+    - type: ConfigChange
+---
+apiVersion: apps.openshift.io/v1
+kind: DeploymentConfig
+metadata:
+  name: masar-auth
+  labels:
+    app: masar
+    component: auth
+spec:
+  replicas: 1
+  selector:
+    app: masar
+    component: auth
+    deploymentconfig: masar-auth
+  template:
+    metadata:
+      labels:
+        app: masar
+        component: auth
+        deploymentconfig: masar-auth
+    spec:
+      initContainers:
+        - name: wait-for-db
+          image: busybox:latest
+          command:
+            - sh
+            - -c
+            - |
+              echo "Waiting for PostgreSQL..."
+              until nc -z masar-postgresql 5432; do
+                echo "PostgreSQL not ready, waiting..."
+                sleep 2
+              done
+              echo "PostgreSQL is ready!"
+      containers:
+        - name: auth
+          image: image-registry.openshift-image-registry.svc:5000/m-achek-dev/masar-auth:latest
+          ports:
+            - containerPort: 8000
+              protocol: TCP
+          env:
+            - name: SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: masar-secrets
+                  key: jwt-secret-key
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: masar-secrets
+                  key: database-url
+            - name: POSTGRES_HOST
+              value: "masar-postgresql"
+            - name: POSTGRES_PORT
+              value: "5432"
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  name: masar-secrets
+                  key: database-name
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: masar-secrets
+                  key: database-user
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: masar-secrets
+                  key: database-password
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 8000
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+  triggers:
+    - type: ConfigChange
+    - type: ImageChange
+      imageChangeParams:
+        automatic: true
+        containerNames:
+          - auth
+        from:
+          kind: ImageStreamTag
+          name: masar-auth:latest
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: masar-auth
+  labels:
+    app: masar
+    component: auth
+spec:
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+      protocol: TCP
+  selector:
+    app: masar
+    component: auth
+  type: ClusterIP
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: masar-auth-api
+  labels:
+    app: masar
+    component: auth
+spec:
+  path: /api
+  to:
+    kind: Service
+    name: masar-auth
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

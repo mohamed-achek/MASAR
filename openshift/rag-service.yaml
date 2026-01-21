@@ -1,0 +1,155 @@
+apiVersion: image.openshift.io/v1
+kind: ImageStream
+metadata:
+  name: masar-rag
+  labels:
+    app: masar
+    component: rag
+---
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  name: masar-rag
+  labels:
+    app: masar
+    component: rag
+spec:
+  output:
+    to:
+      kind: ImageStreamTag
+      name: masar-rag:latest
+  source:
+    type: Binary
+  strategy:
+    type: Docker
+    dockerStrategy:
+      dockerfilePath: Dockerfile.rag
+  triggers:
+    - type: ConfigChange
+---
+apiVersion: apps.openshift.io/v1
+kind: DeploymentConfig
+metadata:
+  name: masar-rag
+  labels:
+    app: masar
+    component: rag
+spec:
+  replicas: 1
+  selector:
+    app: masar
+    component: rag
+    deploymentconfig: masar-rag
+  template:
+    metadata:
+      labels:
+        app: masar
+        component: rag
+        deploymentconfig: masar-rag
+    spec:
+      containers:
+        - name: rag
+          image: image-registry.openshift-image-registry.svc:5000/m-achek-dev/masar-rag:latest
+          ports:
+            - containerPort: 8003
+              protocol: TCP
+          env:
+            - name: SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: masar-secrets
+                  key: jwt-secret-key
+            - name: USE_EMBEDDER_SERVICE
+              value: "true"
+            - name: USE_RERANKER_SERVICE
+              value: "true"
+            - name: EMBEDDER_SERVICE_URL
+              value: "http://masar-embedder:8001"
+            - name: RERANKER_SERVICE_URL
+              value: "http://masar-reranker:8002"
+            - name: EMBEDDER_TIMEOUT
+              value: "60.0"
+            - name: RERANKER_TIMEOUT
+              value: "120.0"
+            - name: OLLAMA_HOST
+              value: "localhost:11434"
+          volumeMounts:
+            - name: rag-data
+              mountPath: /app/data/final/indices
+              subPath: indices
+            - name: rag-data
+              mountPath: /app/data/final/embeddings
+              subPath: embeddings
+            - name: rag-data
+              mountPath: /app/data/final/chunks
+              subPath: chunks
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "200m"
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 8003
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 8003
+            initialDelaySeconds: 30
+            periodSeconds: 10
+      volumes:
+        - name: rag-data
+          persistentVolumeClaim:
+            claimName: masar-rag-data-pvc
+  triggers:
+    - type: ConfigChange
+    - type: ImageChange
+      imageChangeParams:
+        automatic: true
+        containerNames:
+          - rag
+        from:
+          kind: ImageStreamTag
+          name: masar-rag:latest
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: masar-rag
+  labels:
+    app: masar
+    component: rag
+spec:
+  ports:
+    - name: http
+      port: 8003
+      targetPort: 8003
+      protocol: TCP
+  selector:
+    app: masar
+    component: rag
+  type: ClusterIP
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: masar-rag-api
+  labels:
+    app: masar
+    component: rag
+spec:
+  path: /api/rag
+  to:
+    kind: Service
+    name: masar-rag
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

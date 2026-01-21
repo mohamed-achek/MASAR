@@ -1,0 +1,185 @@
+# =============================================================================
+# Masar RAG Application - Docker Compose
+# Local development environment mirroring OpenShift deployment
+# 
+# Supports two modes:
+# 1. Monolith mode (default): All ML models loaded in backend
+# 2. Distributed mode: ML models in separate containers (set USE_*_SERVICE=true)
+# =============================================================================
+version: '3.8'
+
+services:
+  # =========================================================================
+  # PostgreSQL Database
+  # =========================================================================
+  postgresql:
+    image: postgres:15-alpine
+    container_name: masar-postgresql
+    environment:
+      POSTGRES_USER: masar_user
+      POSTGRES_PASSWORD: MasarSecurePass2024!
+      POSTGRES_DB: masar_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U masar_user -d masar_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - masar-network
+
+  # =========================================================================
+  # Embedder Service (BGE-M3) - ML Model Pod
+  # Only used in distributed mode
+  # =========================================================================
+  embedder:
+    build:
+      context: ./services/embedder
+      dockerfile: Dockerfile
+    container_name: masar-embedder
+    profiles:
+      - distributed  # Only start with: docker-compose --profile distributed up
+    environment:
+      - EMBEDDING_MODEL=BAAI/bge-m3
+      - DEVICE=cpu
+      - MAX_BATCH_SIZE=32
+      - MAX_LENGTH=512
+      - PORT=8001
+    volumes:
+      - model_cache:/app/cache
+    ports:
+      - "8001:8001"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
+      interval: 30s
+      timeout: 30s
+      start_period: 120s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+        reservations:
+          memory: 2G
+    networks:
+      - masar-network
+
+  # =========================================================================
+  # Reranker Service (BGE-Reranker-Large) - ML Model Pod
+  # Only used in distributed mode
+  # =========================================================================
+  reranker:
+    build:
+      context: ./services/reranker
+      dockerfile: Dockerfile
+    container_name: masar-reranker
+    profiles:
+      - distributed  # Only start with: docker-compose --profile distributed up
+    environment:
+      - RERANKER_MODEL=BAAI/bge-reranker-large
+      - DEVICE=cpu
+      - PORT=8002
+    volumes:
+      - model_cache:/app/cache
+    ports:
+      - "8002:8002"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/health')"]
+      interval: 30s
+      timeout: 30s
+      start_period: 120s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 1G
+    networks:
+      - masar-network
+
+  # =========================================================================
+  # Backend (FastAPI + RAG Pipeline)
+  # In distributed mode: thin orchestrator (~512MB memory)
+  # In monolith mode: loads all ML models (~4GB memory)
+  # =========================================================================
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: masar-backend
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://masar_user:MasarSecurePass2024!@postgresql:5432/masar_db
+      - SECRET_KEY=masar-jwt-secret-key-change-in-production-2024
+      - ALGORITHM=HS256
+      - ACCESS_TOKEN_EXPIRE_MINUTES=1440
+      - CORS_ORIGINS=http://localhost:3000,http://localhost:8080,*
+      - LOG_LEVEL=INFO
+      - WORKERS=2
+      # Microservice configuration (set to true for distributed mode)
+      - USE_EMBEDDER_SERVICE=${USE_EMBEDDER_SERVICE:-false}
+      - USE_RERANKER_SERVICE=${USE_RERANKER_SERVICE:-false}
+      - EMBEDDER_SERVICE_URL=http://embedder:8001
+      - RERANKER_SERVICE_URL=http://reranker:8002
+    volumes:
+      - ./data/final:/app/data/final:ro
+      - backend_logs:/app/logs
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgresql:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3
+    networks:
+      - masar-network
+
+  # =========================================================================
+  # Frontend (React + nginx)
+  # =========================================================================
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+      args:
+        VITE_API_URL: /api
+    container_name: masar-frontend
+    environment:
+      - BACKEND_SERVICE_URL=http://backend:8000
+    ports:
+      - "8080:8080"
+    depends_on:
+      - backend
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - masar-network
+
+# =============================================================================
+# Networks
+# =============================================================================
+networks:
+  masar-network:
+    driver: bridge
+
+# =============================================================================
+# Volumes
+# =============================================================================
+volumes:
+  postgres_data:
+    name: masar-postgres-data
+  backend_logs:
+    name: masar-backend-logs
+  model_cache:
+    name: masar-model-cache
+    name: masar-backend-logs

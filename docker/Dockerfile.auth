@@ -1,0 +1,74 @@
+# Multi-stage build for Auth Service
+FROM python:3.11-slim AS builder
+
+ENV DOCKER_BUILDKIT=1
+
+WORKDIR /build
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libpq-dev \
+    curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# Copy requirements
+COPY requirements-auth.txt ./
+
+# Create virtual environment and install dependencies
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+RUN pip install --upgrade pip && \
+    pip install -r requirements-auth.txt
+
+# Runtime stage
+FROM python:3.11-slim AS runtime
+
+ENV DOCKER_BUILDKIT=1
+
+LABEL io.k8s.description="Masar Auth Service - FastAPI Application" \
+      io.k8s.display-name="Masar Auth Service" \
+      io.openshift.expose-services="8000:http" \
+      io.openshift.tags="python,fastapi,auth,masar" \
+      maintainer="Masar Team"
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app \
+    APP_HOME=/app \
+    HOME=/app
+
+# Install runtime dependencies only
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq5 \
+    curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# Copy virtual environment from builder
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+WORKDIR /app
+
+# Copy application code
+COPY api_auth_service.py database.py ./
+
+# Create necessary directories with proper permissions
+RUN mkdir -p /app/logs \
+    && chmod -R g+rwX /app \
+    && chgrp -R 0 /app
+
+# Ensure permissions are set
+RUN chmod -R g+rwX /app && chgrp -R 0 /app
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:8000/api/health || exit 1
+
+EXPOSE 8000
+
+USER 1001
+
+CMD ["uvicorn", "api_auth_service:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
